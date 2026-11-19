@@ -1,4 +1,4 @@
-# 万象网络 · Wanxiang Web
+# 探原 · SourceQuest
 
 面向 DeepSeek Harness（DSH）的可追溯网络研究插件。
 
