@@ -42,3 +42,7 @@ DSH 适配：工具 / 模型 / 凭据 / 存储 / jobs / RPC
 可选组件缺失时保留基础能力，诊断具体缺口。DSH/Cordis SDK 使用匹配宿主的实例，正式兼容范围由集成测试决定。
 
 不固定个人账号、文件路径、模型组、域名或运行环境。密钥通过宿主引用解析，凭据、私有网页、浏览器状态与真实个人 trace 不进入公开样例。
+
+## 实施依据
+
+具体任务按 [施工计划](IMPLEMENTATION_PLAN.md) 推进；接口和状态以 [CONTRACTS.md](CONTRACTS.md) 为实现起点，质量与工程验收按 [ACCEPTANCE.md](ACCEPTANCE.md)。SDK 公开接口在 SQ-001 中针对锁定发行包重新核验。

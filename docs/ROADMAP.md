@@ -2,6 +2,10 @@
 
 本表是计划，只有附有实现及验收记录的项目才视为完成。
 
+详细任务、依赖与阶段门见 [施工计划](IMPLEMENTATION_PLAN.md)，数据契约见 [CONTRACTS.md](CONTRACTS.md)，验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。
+
+当前阶段：施工计划已记录，SQ-001 起的实现任务均未开工。
+
 ## M0：契约与基线
 
 - [ ] 研究请求、任务状态、证据与错误协议。
