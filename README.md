@@ -37,6 +37,7 @@
 
 - [项目范围](docs/PROJECT.md)
 - [架构设计](docs/ARCHITECTURE.md)
+- [DSH 原生接入与阶梯抓取](docs/WEB_RUNTIME.md)
 - [首发路线图](docs/ROADMAP.md)
 - [施工计划与任务依赖](docs/IMPLEMENTATION_PLAN.md)
 - [数据与状态契约](docs/CONTRACTS.md)
