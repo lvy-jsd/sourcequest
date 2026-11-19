@@ -1,0 +1,28 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.venv/
+__pycache__/
+
+# Local credentials and state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.credentials*
+state/
+data/
+cache/
+artifacts/
+profiles/
+traces/
+*.log
+
+# Editors and local OS files
+.DS_Store
+.idea/
+.vscode/
