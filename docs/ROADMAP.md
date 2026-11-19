@@ -4,7 +4,7 @@
 
 详细任务、依赖与阶段门见 [施工计划](IMPLEMENTATION_PLAN.md)，数据契约见 [CONTRACTS.md](CONTRACTS.md)，验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。
 
-当前阶段：施工计划已记录，SQ-001 起的实现任务均未开工。
+当前阶段：SQ-001 已开始。[rc.5 兼容勘验](COMPATIBILITY.md)记录了发行包、公开接口和模块导出，类型检查和隔离 bundle 验收待完成。
 
 ## M0：契约与基线
 
