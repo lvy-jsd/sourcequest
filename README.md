@@ -39,6 +39,7 @@
 - [架构设计](docs/ARCHITECTURE.md)
 - [DSH 原生接入与阶梯抓取](docs/WEB_RUNTIME.md)
 - [高级获取路线](docs/ADVANCED_RETRIEVAL.md)
+- [全形态资源与执行器](docs/RESOURCE_EXECUTORS.md)
 - [首发路线图](docs/ROADMAP.md)
 - [施工计划与任务依赖](docs/IMPLEMENTATION_PLAN.md)
 - [数据与状态契约](docs/CONTRACTS.md)
