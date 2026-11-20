@@ -32,7 +32,7 @@ export type RoutedSearch = {
 };
 
 export class SearchProviderError extends Error {
-  constructor(readonly code: ProviderErrorCode, message = code, readonly retryAfterMs?: number) {
+  constructor(readonly code: ProviderErrorCode, message: string = code, readonly retryAfterMs?: number) {
     super(message);
     this.name = "SearchProviderError";
   }
