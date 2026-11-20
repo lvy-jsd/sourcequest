@@ -1,6 +1,6 @@
 # 任务、路由与证据契约
 
-设计版本 1.0。这里描述待实现的接口；Schema 文件和 TypeScript 类型在 SQ-002 中生成并互相校验。
+设计版本 1.0。SQ-002 已实现任务状态、状态变更、预算和错误的首批校验，见 [contracts.ts](../src/core/contracts.ts)。TypeScript 类型从 Schema 推导。工具参数、证据、路由和持久化协议仍按下文设计推进。
 
 ## 1. 公共工具
 
@@ -41,9 +41,12 @@
 ```text
 queued → running → completed | partial | failed | cancelled
                → needs_user_action → running（明确继续）
-running/queued → interrupted（重载/崩溃核验后）
+queued/needs_user_action → cancelled（已确认无待退出的工作）
+running/queued/needs_user_action → interrupted（重载/崩溃核验后）
 interrupted/partial/failed → queued（可恢复、显式 resume、新 runId）
 ```
+
+[状态转换函数](../src/core/task-state.ts)要求调用携带当前 runId 和 expectedRevision。存储层负责授权、分配全新 runId、保留旧运行记录与原子提交。
 
 同一 run 的终态不可被迟到消息改写；对已终止任务恢复是新 run，保留旧结果和审计记录。`cancel_requested` 是取消传播中的控制标志，资源退出确认后才记 cancelled；不能先声称进程已停。
 
@@ -66,6 +69,8 @@ interrupted/partial/failed → queued（可恢复、显式 resume、新 runId）
 ## 4. 预算与调用账本
 
 维度：wallTime、logicalRequests、knownBackendCalls、modelInput/OutputTokens、pages、browserSteps、bytes、并发，以及可选的 currencyLimit。
+
+首批 Schema 用 `wallTimeMs` 表示毫秒，金额上限用三字母币种代码与最小货币单位整数表达。
 
 处理顺序：校验→预留→持久标记开始→调用→保存结果/receipt→结算→事件。重试单独计 attempt；并发预留不能超过任务和部署上限。
 
