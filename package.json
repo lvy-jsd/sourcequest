@@ -11,7 +11,7 @@
     "cordis.patch.yml"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build": "tsc",
@@ -25,9 +25,11 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-home-paths": "0.2.2-rc.5",
     "@deepseek-ai/dsh-tools": "0.2.2-rc.5"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-home-paths": "0.2.2-rc.5",
     "@deepseek-ai/dsh-scope": "0.2.2-rc.5",
     "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.5",
     "@deepseek-ai/dsh-web": "0.2.2-rc.5",

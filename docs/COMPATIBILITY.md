@@ -68,3 +68,16 @@ SOURCEQUEST_SMOKE_STATE=removed dsh web --patch "$lab/smoke.yml" --host 127.0.0.
 ```
 
 实测成功时日志含 `sourcequest-research-smoke: search partial success and public read OK`。移除插件后使用原诊断补丁启动，验证两个工具都已移除。运行此烟测会读取公开的示例页面；普通 CI 只使用固定测试数据。
+
+
+### 快照重启验收
+
+安装构建包后，把 [dsh-snapshot.mjs](../test/fixtures/dsh-snapshot.mjs) 复制到隔离目录。用独立补丁插入 fixture：
+
+```yaml
+- insert:
+    - id: sourcequest-snapshot-smoke
+      name: ./dsh-snapshot.mjs
+```
+
+用 `SOURCEQUEST_SNAPSHOT_STAGE=write` 启动，等待 `sourcequest-snapshot-smoke: saved <hash>`。停止进程后用同一个隔离 `DSH_HOME`、`SOURCEQUEST_SNAPSHOT_STAGE=read` 和 `SOURCEQUEST_SNAPSHOT_HASH=<hash>` 再启动。成功时日志为 `sourcequest-snapshot-smoke: restart retrieval and owner isolation OK`。fixture 以合成会话身份调用宿主注册的工具，验证工具层 owner 检查与跨进程持久性。客户端认证另行验证。

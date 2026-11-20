@@ -71,3 +71,21 @@ test("read policy rejects IP literals and special-purpose DNS results", () => {
     assert.throws(() => normalizeUrl(url), /public HTTPS/u, url);
   }
 });
+
+
+test("retains the inline citation when the snapshot cannot be committed", async () => {
+  const document = "Evidence survives a storage failure.";
+  const result = await research({ urls: ["https://example.com/"] }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Fixture", text: document };
+    },
+    saveSnapshot() { throw new Error("filesystem details"); },
+  }, new AbortController().signal);
+  assert.equal(result.status, "partial");
+  assert.equal(result.evidence[0].quote, document);
+  assert.equal(result.evidence[0].snapshotSaved, false);
+  assert.equal(result.issues[0].code, "STORAGE_FAILED");
+  assert.equal(JSON.stringify(result).includes("filesystem details"), false);
+});

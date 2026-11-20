@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { snapshotHash } from "./snapshot-store.js";
 import { z } from "zod";
 import { schemaVersion } from "./contracts.js";
 
@@ -20,11 +20,12 @@ type ResearchPort = {
   search(query: string, maxResults: number, signal: AbortSignal): Promise<readonly SearchHit[]>;
   read(url: string, signal: AbortSignal): Promise<ReadPage>;
   normalizeUrl(url: string): string;
+  saveSnapshot?(digest: string, text: string): void;
 };
 
 type FailureCode = "INVALID_REQUEST" | "READ_FAILED" | "SEARCH_FAILED"
   | "AUTH_REQUIRED" | "RATE_LIMITED" | "UNSUPPORTED_MIME" | "BUDGET_EXHAUSTED"
-  | "UNUSABLE_BODY" | "EMPTY_RESULT" | "TIMEOUT";
+  | "UNUSABLE_BODY" | "EMPTY_RESULT" | "TIMEOUT" | "STORAGE_FAILED";
 
 export class ResearchError extends Error {
   constructor(readonly code: FailureCode, message: string) {
@@ -51,9 +52,10 @@ const evidenceSchema = z.strictObject({
   start: z.int().nonnegative(),
   end: z.int().positive(),
   quote: z.string().min(1).max(excerptLimit),
+  snapshotSaved: z.boolean(),
 }).refine(({ start, end, quote }) => end - start === quote.length);
 
-function citation(url: string, page: ReadPage, focus: string) {
+function citation(url: string, page: ReadPage, focus: string, save?: ResearchPort["saveSnapshot"]) {
   const document = page.text.replace(/\r\n?/gu, "\n").split("\n")
     .map((line) => line.replace(/[^\S\n]+/gu, " ").trim()).filter(Boolean).join("\n");
   if (!document) throw new ResearchError("UNUSABLE_BODY", "The page had no readable text.");
@@ -75,10 +77,20 @@ function citation(url: string, page: ReadPage, focus: string) {
   let quote = document.slice(start, start + excerptLimit).trimEnd();
   // Preserve UTF-16 coordinates without returning half of a surrogate pair.
   quote = quote.replace(/[\uD800-\uDBFF]$/u, "");
+  const digest = snapshotHash(document);
+  let snapshotSaved = false;
+  if (save) {
+    try {
+      save(digest, document);
+      snapshotSaved = true;
+    } catch {
+      // Keep a usable inline quote if the local store is unavailable or full.
+    }
+  }
   return evidenceSchema.parse({
     requestedUrl: url, finalUrl: page.finalUrl, mime: page.mime, title: page.title.slice(0, 200),
     fetchedAt: new Date().toISOString(),
-    snapshotHash: createHash("sha256").update(document).digest("hex"),
+    snapshotHash: digest, snapshotSaved,
     coordinateSpace: "normalized-text-v1-utf16",
     start, end: start + quote.length, quote,
   });
@@ -156,16 +168,24 @@ export async function research(input: unknown, port: ResearchPort, signal: Abort
 
   const targets = [...candidates].slice(0, pageLimit);
   const readResults = await Promise.all(targets.map((url, index) =>
-    attempt("read", index, signal, async (operationSignal) =>
-      citation(url, await port.read(url, operationSignal), focus || queries.join(" ")))));
+    attempt("read", index, signal, async (operationSignal) => {
+      const page = await port.read(url, operationSignal);
+      operationSignal.throwIfAborted();
+      return citation(url, page, focus || queries.join(" "), port.saveSnapshot);
+    })));
   const evidence: z.infer<typeof evidenceSchema>[] = [];
   const seenEvidence = new Set<string>();
-  for (const result of readResults) {
+  for (const [index, result] of readResults.entries()) {
     if ("issue" in result) {
       issues.push(result.issue);
-    } else if (!seenEvidence.has(result.value.finalUrl)) {
-      seenEvidence.add(result.value.finalUrl);
-      evidence.push(result.value);
+    } else {
+      if (port.saveSnapshot && !result.value.snapshotSaved) {
+        issues.push({ phase: "read", index, code: "STORAGE_FAILED", summary: "The snapshot store is unavailable or full." });
+      }
+      if (!seenEvidence.has(result.value.finalUrl)) {
+        seenEvidence.add(result.value.finalUrl);
+        evidence.push(result.value);
+      }
     }
   }
 

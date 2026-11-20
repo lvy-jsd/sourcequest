@@ -6,7 +6,7 @@
 
 ### net_research
 
-当前实现支持 `queries`、`urls` 和 `focus`。返回 `schemaVersion`、操作状态、候选来源、引文、失败项和因页面预算未读取的候选数。这里的 `completed` 指有界检索操作成功。坐标采用规范化正文的 UTF-16 偏移量，`end` 为排他边界。正文暂不持久化，后续通过 Artifact 引用保留可复查的快照。
+当前实现支持 `queries`、`urls` 和 `focus`。返回 `schemaVersion`、操作状态、候选来源、引文、失败项和因页面预算未读取的候选数。这里的 `completed` 指有界检索操作成功。坐标采用规范化正文的 UTF-16 偏移量，`end` 为排他边界。会话内调用会尝试保存规范化快照。仅在事务提交后返回 `snapshotSaved: true`。
 
 以下是最终工具协议的请求字段：
 
@@ -26,7 +26,9 @@
 
 ### net_job
 
-动作：status / list / results / evidence / cancel / resume。输入 taskId、游标/限制、可选 expectedRevision 与 clientRequestId；list 隐式限于调用者。运行控制必须校验当前 owner，不依赖 ID 难猜。
+当前开放 `evidence`，输入 `snapshotHash` 与可选的 UTF-16 `offset`。授权由执行上下文的 DSH 会话 ID 决定。每次返回最多 3000 个 UTF-16 代码单元，边界保持完整字符对。找不到、越权或校验失败时统一返回 `ARTIFACT_MISSING`。
+
+规划中的动作：status / list / results / evidence / cancel / resume。输入 taskId、游标/限制、可选 expectedRevision 与 clientRequestId；list 隐式限于调用者。运行控制必须校验当前 owner，不依赖 ID 难猜。
 
 `resume` 只恢复允许状态；默认保留剩余预算。新增预算必须是可追溯的显式操作，不能每次恢复自动重置花费。取消动作幂等，完成任务再次取消返回已终止，不抹除结果。
 
@@ -105,7 +107,9 @@ interrupted/partial/failed → queued（可恢复、显式 resume、新 runId）
 
 ## 7. 持久化与恢复
 
-v0.1 native 计划用宿主 storageDomain 保存小型任务/设置/检查点元数据，正文与附件由 ArtifactStore 单独管理。SQ-001 确认公开路径接口；若缺失，要求显式配置专用数据目录，不猜测个人主目录布局。
+已用 DSH 的公开 `resolveDshHome()` 定位本地快照库。数据库位于该目录下的 `sourcequest/snapshots.sqlite`，只保存规范化正文，按会话隔离，同一会话内按 SHA-256 去重。每个会话最多 8 MiB 和 128 条，整个库最多 64 MiB 正文和 2048 条。额度耗尽时保留工具结果内的短引文，返回存储失败，既有快照仍可查。暂未实现回收和删除入口。Node.js 需要 22.13 或更新版本。当前使用 Node 内置 SQLite，某些版本仍会提示实验性 API。
+
+任务、设置和检查点元数据仍计划通过宿主 storageDomain 管理。原始响应与二进制附件另行设计。
 
 写入 artifact 后再提交引用该 artifact 的检查点；元数据失败留下的孤儿产物由保守回收清理，不能反过来把缺失 blob 标完成。保留 owner 与 run 代际，恢复时校验成果、预算、来源开关、凭据与执行器。
 
