@@ -50,3 +50,21 @@ SOURCEQUEST_SMOKE_STATE=removed dsh web --patch "$lab/smoke.yml" --host 127.0.0.
 ```
 
 看到 `sourcequest-profile-smoke: removed OK` 后停止实例。
+
+
+### 研究链路烟测
+
+隔离 profile 用合成搜索源验证真实 DSH 执行，使用一个公开示例页面验证 HTTPS 读链路。搜索源模拟一条失败和一条成功，无需配置搜索凭据。
+
+在上面的安装流程里，把 [dsh-research.mjs](../test/fixtures/dsh-research.mjs) 一同复制到隔离目录。在 `smoke.yml` 现有条目之后追加以下补丁，然后启动 Web profile：
+
+```yaml
+- id: web
+  config:
+    searchProvider: sourcequest-test
+- insert:
+    - id: sourcequest-research-smoke
+      name: ./dsh-research.mjs
+```
+
+实测成功时日志含 `sourcequest-research-smoke: search partial success and public read OK`。移除插件后使用原诊断补丁启动，验证两个工具都已移除。运行此烟测会读取公开的示例页面；普通 CI 只使用固定测试数据。

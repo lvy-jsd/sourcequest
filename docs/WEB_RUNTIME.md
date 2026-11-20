@@ -43,3 +43,10 @@
 首发优先交付兼容接入、逐查询容错、L1、摘要与 Artifact。验证原生 Provider 选择和既有管理器共存后再列为受支持模式。L2/L3 与高级工具按后续施工批次逐项验收。
 
 协议发现、多模态证据和用户主动订阅见[高级获取路线](ADVANCED_RETRIEVAL.md)。该路线扩展执行器选择，沿用本文件的出站和访问控制。
+
+
+## 预览读取策略
+
+当前 `net_research` 用宿主 Web Seam 搜索。它使用独立的只读 HTTPS 适配器读取公开站点，以便固定连接目标。每次跳转重新校验域名，解析 A/AAAA 后拒绝含内网和特殊用途地址的结果，并把 HTTPS 连接固定到已校验的 IP，保留原域名的 TLS 校验。客户端不附带 Cookie，单条操作预算 6.5 秒，最多三次跳转，正文上限 512 KiB。允许 HTML、XHTML 和纯文本。
+
+此策略依赖宿主所在网络的出站隔离，需由部署者约束该网络内使用全球单播 IP 的私有路由。解析文本进入工具结果，作为外部资料处理。模型侧聚焦仅按正文词项挑选引文，浏览器、文档解析与持久证据在后续阶段实现。[IPv4 地址注册表](https://www.iana.org/assignments/iana-ipv4-special-registry/) · [IPv6 地址注册表](https://www.iana.org/assignments/iana-ipv6-special-registry/)

@@ -4,7 +4,7 @@
 
 详细任务、依赖与阶段门见 [施工计划](IMPLEMENTATION_PLAN.md)，数据契约见 [CONTRACTS.md](CONTRACTS.md)，验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。
 
-当前阶段：SQ-001 已开始。[rc.5 兼容勘验](COMPATIBILITY.md)记录了发行包、公开接口和模块导出，类型检查和隔离 bundle 验收待完成。
+当前阶段：SQ-001 与 SQ-003 已通过首期验收。首条搜索、公开 HTTPS 读取和引文链路已在隔离 profile 验证，见 [当前施工状态](HANDOFF.md)。
 
 ## M0：契约与基线
 
@@ -15,7 +15,7 @@
 
 ## v0.1：DSH 原生闭环
 
-- [ ] 标准 bundle、安装/卸载与诊断。
+- [x] 标准 bundle、安装/卸载与诊断。
 - [ ] 原生来源、策略、任务与证据页面。
 - [ ] 自动路由、手动覆盖与来源去重。
 - [ ] 搜索、原文读取、证据结果和有界补查。

@@ -9,6 +9,7 @@ export async function apply(ctx) {
   assert.ok(expected === "installed" || expected === "removed");
   if (expected === "removed") {
     assert.equal(ctx.tools.get("sourcequest_status"), undefined);
+    assert.equal(ctx.tools.get("net_research"), undefined);
   } else {
     for (let attempt = 0; attempt < 40 && !ctx.tools.get("sourcequest_status"); attempt++) {
       await delay(50);
