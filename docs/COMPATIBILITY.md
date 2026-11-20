@@ -81,3 +81,19 @@ SOURCEQUEST_SMOKE_STATE=removed dsh web --patch "$lab/smoke.yml" --host 127.0.0.
 ```
 
 用 `SOURCEQUEST_SNAPSHOT_STAGE=write` 启动，等待 `sourcequest-snapshot-smoke: saved <hash>`。停止进程后用同一个隔离 `DSH_HOME`、`SOURCEQUEST_SNAPSHOT_STAGE=read` 和 `SOURCEQUEST_SNAPSHOT_HASH=<hash>` 再启动。成功时日志为 `sourcequest-snapshot-smoke: restart retrieval and owner isolation OK`。fixture 以合成会话身份调用宿主注册的工具，验证工具层 owner 检查与跨进程持久性。客户端认证另行验证。
+
+
+### 后台任务验收
+
+把 [dsh-jobs.mjs](../test/fixtures/dsh-jobs.mjs) 放在隔离目录，在 Web profile 中用以下补丁启动：
+
+```yaml
+- id: web
+  config:
+    searchProvider: sourcequest-jobs-test
+- insert:
+    - id: sourcequest-jobs-smoke
+      name: ./dsh-jobs.mjs
+```
+
+fixture 创建两个宿主 Agent，无需模型认证或模型请求。它通过 DSH 执行工具，验证原生作业提交、幂等键、结果与会话归属，再取消进行中的合成查询。成功日志为 `sourcequest-jobs-smoke: native submit, deduplication, result, ownership and cancellation OK`。任务存储重开及旧代际保护由 `npm test` 验证。

@@ -5,7 +5,7 @@ export const name = "sourcequest-snapshot-smoke";
 export const inject = ["tools"];
 
 function execution(id) {
-  return { agent: { session: { id } }, signal: AbortSignal.timeout(10_000) };
+  return { agent: { session: { id, requestContext: () => undefined } }, signal: AbortSignal.timeout(10_000) };
 }
 
 export async function apply(ctx) {

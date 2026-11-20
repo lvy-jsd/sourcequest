@@ -6,7 +6,7 @@
 
 ### net_research
 
-当前实现支持 `queries`、`urls` 和 `focus`。返回 `schemaVersion`、操作状态、候选来源、引文、失败项和因页面预算未读取的候选数。这里的 `completed` 指有界检索操作成功。坐标采用规范化正文的 UTF-16 偏移量，`end` 为排他边界。会话内调用会尝试保存规范化快照。仅在事务提交后返回 `snapshotSaved: true`。
+当前实现支持 `queries`、`urls` 和 `focus`。使用 `background: true` 时必须提供 `clientRequestId`，后台提交返回持久 taskId、runId 与初始状态。耗时、查询与页面数量仍使用预览实现的固定预算。返回 `schemaVersion`、操作状态、候选来源、引文、失败项和因页面预算未读取的候选数。这里的 `completed` 指有界检索操作成功。坐标采用规范化正文的 UTF-16 偏移量，`end` 为排他边界。会话内调用会尝试保存规范化快照。仅在事务提交后返回 `snapshotSaved: true`。
 
 以下是最终工具协议的请求字段：
 
@@ -26,7 +26,7 @@
 
 ### net_job
 
-当前开放 `evidence`，输入 `snapshotHash` 与可选的 UTF-16 `offset`。授权由执行上下文的 DSH 会话 ID 决定。每次返回最多 3000 个 UTF-16 代码单元，边界保持完整字符对。找不到、越权或校验失败时统一返回 `ARTIFACT_MISSING`。
+当前开放 `status`、`results`、`cancel` 和 `evidence`。前三项输入 `taskId`。取消返回 `cancelRequested`，执行释放资源并提交状态后，`status` 才会返回 `cancelled`。`evidence` 输入 `snapshotHash` 与可选的 UTF-16 `offset`。授权由执行上下文的 DSH 会话 ID 决定。每次返回最多 3000 个 UTF-16 代码单元，边界保持完整字符对。找不到、越权或校验失败时统一返回 `ARTIFACT_MISSING`。
 
 规划中的动作：status / list / results / evidence / cancel / resume。输入 taskId、游标/限制、可选 expectedRevision 与 clientRequestId；list 隐式限于调用者。运行控制必须校验当前 owner，不依赖 ID 难猜。
 
@@ -109,7 +109,7 @@ interrupted/partial/failed → queued（可恢复、显式 resume、新 runId）
 
 已用 DSH 的公开 `resolveDshHome()` 定位本地快照库。数据库位于该目录下的 `sourcequest/snapshots.sqlite`，只保存规范化正文，按会话隔离，同一会话内按 SHA-256 去重。每个会话最多 8 MiB 和 128 条，整个库最多 64 MiB 正文和 2048 条。额度耗尽时保留工具结果内的短引文，返回存储失败，既有快照仍可查。暂未实现回收和删除入口。Node.js 需要 22.13 或更新版本。当前使用 Node 内置 SQLite，某些版本仍会提示实验性 API。
 
-任务、设置和检查点元数据仍计划通过宿主 storageDomain 管理。原始响应与二进制附件另行设计。
+任务元数据和结果保存在宿主 storageDomain 的 `sourcequest_tasks` 域。提交时先持久化 `queued`，宿主 jobs 负责在当前进程运行。重启时将尚未落定的运行标记为 `interrupted`。当前支持恢复读取任务记录，对外续跑待逐步检查点与预算账本完成。默认使用 DSH 的单进程存储归属，同一个 `DSH_HOME` 下的多个 DSH 进程需要由部署者避免同时写入同一域。设置与逐步检查点、原始响应和二进制附件另行实现。
 
 写入 artifact 后再提交引用该 artifact 的检查点；元数据失败留下的孤儿产物由保守回收清理，不能反过来把缺失 blob 标完成。保留 owner 与 run 代际，恢复时校验成果、预算、来源开关、凭据与执行器。
 

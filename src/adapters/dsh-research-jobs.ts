@@ -1,0 +1,124 @@
+import type { JobId, JobOutcome, JobRegistry } from "@deepseek-ai/dsh-jobs";
+import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
+import { DshTaskStore, TaskStoreError } from "./dsh-task-store.js";
+import type { research, ResearchInput } from "../core/research.js";
+import type { TaskState } from "../core/contracts.js";
+
+declare module "@deepseek-ai/dsh-jobs/view" {
+  interface JobKindMap {
+    sourcequest: "sourcequest";
+  }
+}
+
+type Owner = NonNullable<ToolRunContext["agent"]>["session"]["id"];
+type Executor = (signal: AbortSignal) => ReturnType<typeof research>;
+type ActiveJob = {
+  owner: Owner;
+  id: JobId;
+  cancel(): void;
+  done: Promise<JobOutcome>;
+};
+
+export class ResearchJobs {
+  private readonly active = new Map<string, ActiveJob>();
+  private readonly submissions = new Set<Promise<unknown>>();
+  private closed = false;
+
+  constructor(private readonly store: DshTaskStore, private readonly jobs: JobRegistry) {}
+
+  submit(
+    owner: Owner, key: string, input: ResearchInput,
+    exec: Pick<ToolRunContext, "callId" | "rootCallId" | "signal">, run: Executor,
+  ) {
+    const submission = this.start(owner, key, input, exec, run);
+    this.submissions.add(submission);
+    return submission.finally(() => this.submissions.delete(submission));
+  }
+
+  private async start(
+    owner: Owner, key: string, input: ResearchInput,
+    exec: Pick<ToolRunContext, "callId" | "rootCallId" | "signal">, run: Executor,
+  ) {
+    exec.signal.throwIfAborted();
+    if (this.closed) throw new TaskStoreError("CONFLICT", "The research worker is closing.");
+    const { created, run: pending } = await this.store.create(owner, key, input);
+    if (!created) return { ...pending.state, reused: true };
+
+    const state = pending.state;
+    if (exec.signal.aborted || this.closed) {
+      return (await this.store.transition(owner, state, "interrupted")).state;
+    }
+    if (this.active.size >= 2) {
+      return (await this.store.transition(owner, state, "interrupted", { code: "BUDGET_EXHAUSTED" })).state;
+    }
+
+    try {
+      const id = this.jobs.start({
+        kind: "sourcequest",
+        label: "SourceQuest web research",
+        owner,
+        toolCall: { callId: exec.callId, rootCallId: exec.rootCallId },
+        run: (handle) => {
+          const controller = new AbortController();
+          const cancel = () => controller.abort();
+          const done = this.work(owner, state, run, controller.signal)
+            .catch((): JobOutcome => ({ status: "failed", detail: "Could not persist the task state." }))
+            .finally(() => this.active.delete(state.taskId));
+          this.active.set(state.taskId, { owner, id: handle.id, cancel, done });
+          return { cancel, done };
+        },
+      });
+      return { ...state, hostJobId: id };
+    } catch {
+      return (await this.store.transition(owner, state, "interrupted", { code: "BACKGROUND_UNAVAILABLE" })).state;
+    }
+  }
+
+  private async work(owner: Owner, initial: TaskState, run: Executor, signal: AbortSignal): Promise<JobOutcome> {
+    let state = initial;
+    try {
+      signal.throwIfAborted();
+      state = (await this.store.transition(owner, state, "running")).state;
+      signal.throwIfAborted();
+      const result = await run(signal);
+      signal.throwIfAborted();
+      const status = result.status === "completed" ? "completed" : result.status === "partial" ? "partial" : "failed";
+      await this.store.transition(owner, state, status, result);
+      return { status: status === "failed" ? "failed" : "completed" };
+    } catch {
+      if (signal.aborted) {
+        await this.store.transition(owner, state, this.closed ? "interrupted" : "cancelled");
+        return { status: "killed" };
+      }
+      await this.store.transition(owner, state, state.status === "queued" ? "interrupted" : "failed", {
+        code: "RESEARCH_FAILED",
+      });
+      return { status: "failed" };
+    }
+  }
+
+  status(owner: Owner, taskId: string) {
+    return this.store.get(owner, taskId).current.state;
+  }
+
+  result(owner: Owner, taskId: string) {
+    return this.store.get(owner, taskId).current;
+  }
+
+  cancel(owner: Owner, taskId: string) {
+    const { state } = this.store.get(owner, taskId).current;
+    const live = this.active.get(taskId);
+    if (!live || live.owner !== owner) return { state, cancelRequested: false };
+    const request = this.jobs.kill(live.id, owner);
+    return { state, cancelRequested: request === "requested" };
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    await Promise.allSettled(this.submissions);
+    const active = [...this.active.values()];
+    for (const entry of active) entry.cancel();
+    await Promise.allSettled(active.map(({ done }) => done));
+    await this.store.close();
+  }
+}

@@ -8,11 +8,13 @@ const resultsPerQuery = 3;
 const operationTimeoutMs = 6500;
 const excerptLimit = 850;
 
-const requestSchema = z.strictObject({
+export const researchRequestSchema = z.strictObject({
   queries: z.array(z.string().trim().min(1).max(250)).max(queryLimit).default([]),
   urls: z.array(z.string().trim().min(1).max(2048)).max(pageLimit).default([]),
   focus: z.string().trim().max(250).default(""),
-});
+}).refine(({ queries, urls }) => queries.length > 0 || urls.length > 0);
+
+export type ResearchInput = z.infer<typeof researchRequestSchema>;
 
 export type ReadPage = { finalUrl: string; mime: string; title: string; text: string };
 type SearchHit = { url: string; title?: string; snippet?: string };
@@ -121,8 +123,8 @@ async function attempt<T>(
 
 export async function research(input: unknown, port: ResearchPort, signal: AbortSignal) {
   signal.throwIfAborted();
-  const parsed = requestSchema.safeParse(input);
-  if (!parsed.success || (!parsed.data.queries.length && !parsed.data.urls.length)) {
+  const parsed = researchRequestSchema.safeParse(input);
+  if (!parsed.success) {
     return {
       schemaVersion, status: "failed", sources: [], evidence: [],
       issues: [{ phase: "input", index: 0, code: "INVALID_REQUEST",
