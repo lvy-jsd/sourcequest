@@ -1,0 +1,35 @@
+{
+  "name": "@lvy-jsd/dsh-sourcequest",
+  "version": "0.1.0-dev.0",
+  "description": "SourceQuest, a traceable web research plugin for DeepSeek Harness",
+  "license": "Apache-2.0",
+  "repository": "github:lvy-jsd/sourcequest",
+  "type": "module",
+  "exports": "./dist/index.js",
+  "files": [
+    "dist",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.5"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-scope": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.5",
+    "typescript": "5.9.3"
+  }
+}

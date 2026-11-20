@@ -1,6 +1,6 @@
 # DSH rc.5 兼容勘验
 
-核对对象为实际已部署的 DSH `0.2.2-rc.5` 和 Cordis `4.1.0`。以下检查读取发行包清单与类型声明，并在独立 Node 进程导入所列符号。本页记录接口依据，运行兼容仍待探原最小 bundle 的隔离验收。
+核对对象为实际已部署的 DSH `0.2.2-rc.5` 和 Cordis `4.1.0`。以下检查读取发行包清单与类型声明，并在独立 Node 进程导入所列符号。本页记录接口依据与最小插件的隔离验收。
 
 | 接口 | rc.5 依据 | 探原首期用法 |
 |---|---|---|
@@ -16,4 +16,37 @@
 
 已验证导入 `WebError`、`defineTool`、`defineDomain`、`domainTable`、`credentialRef`、`SpillStore` 与 `WorkflowEngine`。该检查验证模块入口与导出，服务是否在特定 profile 或 preset 里可用需要独立验证。
 
-首个运行验收使用锁定发行包、干净 profile 和合成数据。最小 bundle 需能加载、注册诊断工具、调用并卸载，确认作用域与释放语义。随后编译针对实际发行类型的工具调用，确定认证 RPC、持久目录和 Artifact 读取的公开入口。[上游仓库](https://github.com/deepseek-ai/deepseek-harness)
+## 隔离 profile 验收
+
+- 本地以锁定的 rc.5 类型编译，通过真实 Cordis 和 DSH 注册表验证作用域隔离与插件 fiber 释放。
+- 推理机以独立 `DSH_HOME` 和仅监听回环的 Web profile 加载 tarball。诊断工具通过真实 `ctx.tools.execute` 返回 `{"plugin":"sourcequest","status":"loaded"}`。移除包后重新启动，注册表中已无诊断工具。
+- tarball 只包含插件入口、bundle 补丁和包元数据等发布文件。隔离 profile 的依赖目录未安装第二份 DSH SDK。pnpm 会提示未安装 peer，当前 DSH 加载器使用宿主实例。
+- 认证 RPC、持久目录、Artifact 读取与其他表中接口的业务行为随各自任务验证。[上游仓库](https://github.com/deepseek-ai/deepseek-harness)
+
+在已安装 DSH 0.2.2-rc.5 的环境中复现，从项目根目录执行：
+
+```sh
+npm ci
+npm run check
+npm test
+lab=$(mktemp -d)
+tarball=$(npm pack --pack-destination "$lab" --silent)
+cp test/fixtures/dsh-smoke.mjs "$lab/"
+cat > "$lab/smoke.yml" <<'YAML'
+- insert:
+    - id: sourcequest-smoke
+      name: ./dsh-smoke.mjs
+YAML
+export DSH_HOME="$lab/home"
+dsh plugin --profile web add "$lab/$tarball"
+SOURCEQUEST_SMOKE_STATE=installed dsh web --patch "$lab/smoke.yml" --host 127.0.0.1 --port 13097 --no-open
+```
+
+看到 `sourcequest-profile-smoke: installed OK` 后用 Ctrl+C 停止隔离实例，再在同一个 shell 中执行：
+
+```sh
+dsh plugin --profile web remove @lvy-jsd/dsh-sourcequest
+SOURCEQUEST_SMOKE_STATE=removed dsh web --patch "$lab/smoke.yml" --host 127.0.0.1 --port 13097 --no-open
+```
+
+看到 `sourcequest-profile-smoke: removed OK` 后停止实例。
