@@ -25,9 +25,12 @@ type ResearchPort = {
   saveSnapshot?(digest: string, text: string): void;
 };
 
-type FailureCode = "INVALID_REQUEST" | "READ_FAILED" | "SEARCH_FAILED"
-  | "AUTH_REQUIRED" | "RATE_LIMITED" | "UNSUPPORTED_MIME" | "BUDGET_EXHAUSTED"
-  | "UNUSABLE_BODY" | "EMPTY_RESULT" | "TIMEOUT" | "STORAGE_FAILED";
+const failureCodeSchema = z.enum([
+  "INVALID_REQUEST", "READ_FAILED", "SEARCH_FAILED", "AUTH_REQUIRED", "RATE_LIMITED",
+  "UNSUPPORTED_MIME", "BUDGET_EXHAUSTED", "UNUSABLE_BODY", "EMPTY_RESULT", "TIMEOUT",
+  "STORAGE_FAILED", "OUTCOME_UNKNOWN",
+]);
+type FailureCode = z.infer<typeof failureCodeSchema>;
 
 export class ResearchError extends Error {
   constructor(readonly code: FailureCode, message: string) {
@@ -35,7 +38,21 @@ export class ResearchError extends Error {
   }
 }
 
-type Issue = { phase: "input" | "search" | "read"; index: number; code: FailureCode; summary: string };
+const issueSchema = z.strictObject({
+  phase: z.enum(["input", "search", "read"]),
+  index: z.int().nonnegative(),
+  code: failureCodeSchema,
+  summary: z.string().max(512),
+});
+type Issue = z.infer<typeof issueSchema>;
+
+export type CheckpointValue = z.infer<ReturnType<typeof z.json>>;
+export type Reservation = "run" | "unknown" | "exhausted" | { receipt: CheckpointValue };
+export type ResearchCheckpoints = {
+  reserve(stepId: string): Promise<Reservation>;
+  settle(stepId: string, receipt: CheckpointValue): Promise<void>;
+};
+type StepResult<T> = { value: T } | { issue: Issue };
 
 const sourceSchema = z.strictObject({
   url: z.url(),
@@ -101,7 +118,7 @@ function citation(url: string, page: ReadPage, focus: string, save?: ResearchPor
 async function attempt<T>(
   phase: "search" | "read", index: number, caller: AbortSignal,
   run: (signal: AbortSignal) => Promise<T>,
-): Promise<{ value: T } | { issue: Issue }> {
+): Promise<StepResult<T>> {
   const deadline = AbortSignal.timeout(operationTimeoutMs);
   const signal = AbortSignal.any([caller, deadline]);
   try {
@@ -121,7 +138,40 @@ async function attempt<T>(
   }
 }
 
-export async function research(input: unknown, port: ResearchPort, signal: AbortSignal) {
+async function step<T>(
+  phase: "search" | "read", index: number, signal: AbortSignal, schema: z.ZodType<T>,
+  checkpoints: ResearchCheckpoints | undefined, run: (signal: AbortSignal) => Promise<T>,
+): Promise<StepResult<T>> {
+  if (!checkpoints) return attempt(phase, index, signal, run);
+  signal.throwIfAborted();
+  const stepId = `${phase}:${index}`;
+  const decision = await checkpoints.reserve(stepId);
+  signal.throwIfAborted();
+  if (decision === "unknown") {
+    return { issue: { phase, index, code: "OUTCOME_UNKNOWN", summary: "A previous attempt may have reached the source." } };
+  }
+  if (decision === "exhausted") {
+    return { issue: { phase, index, code: "BUDGET_EXHAUSTED", summary: "This task has no remaining request allowance." } };
+  }
+  if (typeof decision === "object") {
+    return z.union([z.strictObject({ value: schema }), z.strictObject({ issue: issueSchema })]).parse(decision.receipt);
+  }
+  const result = await attempt(phase, index, signal, run);
+  await checkpoints.settle(stepId, z.json().parse(result));
+  return result;
+}
+
+async function settleBatch<T>(operations: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(operations);
+  return results.map((result) => {
+    if (result.status === "rejected") throw result.reason;
+    return result.value;
+  });
+}
+
+export async function research(
+  input: unknown, port: ResearchPort, signal: AbortSignal, checkpoints?: ResearchCheckpoints,
+) {
   signal.throwIfAborted();
   const parsed = researchRequestSchema.safeParse(input);
   if (!parsed.success) {
@@ -144,33 +194,39 @@ export async function research(input: unknown, port: ResearchPort, signal: Abort
   }
 
   const sources = new Map<string, z.infer<typeof sourceSchema>>();
-  const searchResults = await Promise.all(queries.map((query, index) =>
-    attempt("search", index, signal, (operationSignal) => port.search(query, resultsPerQuery, operationSignal))));
+  const searchResults = await settleBatch(queries.map((query, index) =>
+    step("search", index, signal, z.array(sourceSchema).max(resultsPerQuery), checkpoints, async (operationSignal) => {
+      const hits = await port.search(query, resultsPerQuery, operationSignal);
+      const eligible = [];
+      for (const hit of hits.slice(0, resultsPerQuery)) {
+        let url: string;
+        try {
+          url = port.normalizeUrl(hit.url);
+        } catch {
+          continue;
+        }
+        eligible.push(sourceSchema.parse({
+          url, title: hit.title?.slice(0, 200) ?? "", snippet: hit.snippet?.slice(0, 280) ?? "",
+        }));
+      }
+      return eligible;
+    })));
   for (const [index, result] of searchResults.entries()) {
     if ("issue" in result) {
       issues.push(result.issue);
       continue;
     }
-    let usable = 0;
-    for (const hit of result.value.slice(0, resultsPerQuery)) {
-      let url: string;
-      try {
-        url = port.normalizeUrl(hit.url);
-      } catch {
-        continue;
-      }
-      usable++;
-      candidates.add(url);
-      if (!sources.has(url)) sources.set(url, sourceSchema.parse({
-        url, title: hit.title?.slice(0, 200) ?? "", snippet: hit.snippet?.slice(0, 280) ?? "",
-      }));
+    for (const hit of result.value) {
+      candidates.add(hit.url);
+      if (!sources.has(hit.url)) sources.set(hit.url, hit);
     }
+    const usable = result.value.length;
     if (!usable) issues.push({ phase: "search", index, code: "EMPTY_RESULT", summary: "No eligible HTTPS sources." });
   }
 
   const targets = [...candidates].slice(0, pageLimit);
-  const readResults = await Promise.all(targets.map((url, index) =>
-    attempt("read", index, signal, async (operationSignal) => {
+  const readResults = await settleBatch(targets.map((url, index) =>
+    step("read", index, signal, evidenceSchema, checkpoints, async (operationSignal) => {
       const page = await port.read(url, operationSignal);
       operationSignal.throwIfAborted();
       return citation(url, page, focus || queries.join(" "), port.saveSnapshot);

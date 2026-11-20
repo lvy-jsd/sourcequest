@@ -26,7 +26,7 @@
 
 ### net_job
 
-当前开放 `status`、`results`、`cancel` 和 `evidence`。前三项输入 `taskId`。取消返回 `cancelRequested`，执行释放资源并提交状态后，`status` 才会返回 `cancelled`。`evidence` 输入 `snapshotHash` 与可选的 UTF-16 `offset`。授权由执行上下文的 DSH 会话 ID 决定。每次返回最多 3000 个 UTF-16 代码单元，边界保持完整字符对。找不到、越权或校验失败时统一返回 `ARTIFACT_MISSING`。
+当前开放 `status`、`results`、`cancel`、`resume` 和 `evidence`。任务操作输入 `taskId`。`resume` 仅接受支持账本且状态为 `interrupted` 的任务，保持同一个 taskId，分配新 runId。取消返回 `cancelRequested`，执行释放资源并提交状态后，`status` 才会返回 `cancelled`。`evidence` 输入 `snapshotHash` 与可选的 UTF-16 `offset`。授权由执行上下文的 DSH 会话 ID 决定。每次返回最多 3000 个 UTF-16 代码单元，边界保持完整字符对。找不到、越权或校验失败时统一返回 `ARTIFACT_MISSING`。
 
 规划中的动作：status / list / results / evidence / cancel / resume。输入 taskId、游标/限制、可选 expectedRevision 与 clientRequestId；list 隐式限于调用者。运行控制必须校验当前 owner，不依赖 ID 难猜。
 
@@ -78,6 +78,8 @@ interrupted/partial/failed → queued（可恢复、显式 resume、新 runId）
 
 处理顺序：校验→预留→持久标记开始→调用→保存结果/receipt→结算→事件。重试单独计 attempt；并发预留不能超过任务和部署上限。
 
+后台预览按任务持久化最多六个逻辑步骤的预约和结果，最多三个查询、三个读取。查询源的内部调用、HTTP 跳转与其实际账单不计成六个网络请求。新 run 重放已保存的结果，未结算的旧预约保留额度并报告 `OUTCOME_UNKNOWN`。只有没有预约的步骤可以新增调用。旧版无账本任务不会自动补记。此阶段的账本不包含金额、token 或跨任务用量。
+
 金额标注 actual / estimated / unknown，并记录币种、来源和时间。逻辑搜索调用经过不透明聚合器时，不得用一次 tool call 冒充只发生一次下游请求。
 
 硬性金额上限只对可计价且能事前约束的路线提供保证；未知计费路线在该模式拒绝或等待明确策略。其余模式可以限制时间/逻辑调用，但要披露下游花费未知。退款和提供方账单不能仅凭本地取消推定。
@@ -109,7 +111,7 @@ interrupted/partial/failed → queued（可恢复、显式 resume、新 runId）
 
 已用 DSH 的公开 `resolveDshHome()` 定位本地快照库。数据库位于该目录下的 `sourcequest/snapshots.sqlite`，只保存规范化正文，按会话隔离，同一会话内按 SHA-256 去重。每个会话最多 8 MiB 和 128 条，整个库最多 64 MiB 正文和 2048 条。额度耗尽时保留工具结果内的短引文，返回存储失败，既有快照仍可查。暂未实现回收和删除入口。Node.js 需要 22.13 或更新版本。当前使用 Node 内置 SQLite，某些版本仍会提示实验性 API。
 
-任务元数据和结果保存在宿主 storageDomain 的 `sourcequest_tasks` 域。提交时先持久化 `queued`，宿主 jobs 负责在当前进程运行。重启时将尚未落定的运行标记为 `interrupted`。当前支持恢复读取任务记录，对外续跑待逐步检查点与预算账本完成。默认使用 DSH 的单进程存储归属，同一个 `DSH_HOME` 下的多个 DSH 进程需要由部署者避免同时写入同一域。设置与逐步检查点、原始响应和二进制附件另行实现。
+任务元数据和结果保存在宿主 storageDomain 的 `sourcequest_tasks` 域。提交时先持久化 `queued`，宿主 jobs 负责在当前进程运行。重启时将尚未落定的运行标记为 `interrupted`。当前可恢复读取任务记录并手动续跑中断任务。默认使用 DSH 的单进程存储归属，同一个 `DSH_HOME` 下的多个 DSH 进程需要由部署者避免同时写入同一域。已持久化查询与网页读取的检查点。设置、原始响应和二进制附件另行实现。
 
 写入 artifact 后再提交引用该 artifact 的检查点；元数据失败留下的孤儿产物由保守回收清理，不能反过来把缺失 blob 标完成。保留 owner 与 run 代际，恢复时校验成果、预算、来源开关、凭据与执行器。
 

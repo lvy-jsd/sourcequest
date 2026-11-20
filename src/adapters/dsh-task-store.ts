@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { defineDomain, domainTable, type Domain, type DomainFacility } from "@deepseek-ai/dsh-storage-domain";
 import { z } from "zod";
 import { schemaVersion, taskStateSchema, type TaskState, type TaskStatus } from "../core/contracts.js";
-import { researchRequestSchema, type ResearchInput } from "../core/research.js";
+import { researchRequestSchema, type CheckpointValue, type ResearchCheckpoints, type ResearchInput, type Reservation } from "../core/research.js";
 import { snapshotHash } from "../core/snapshot-store.js";
 import { changeTaskState } from "../core/task-state.js";
 
@@ -13,11 +13,19 @@ const persistedRun = z.strictObject({
   state: taskStateSchema,
   result: z.json().optional(),
 });
+const checkpointLimit = 6;
+const stepIdSchema = z.string().regex(/^(search|read):[0-2]$/u);
+const checkpointSchema = z.strictObject({
+  id: stepIdSchema,
+  runId: z.uuid(),
+  receipt: z.json().optional(),
+});
 const recordSchema = z.strictObject({
   owner: z.hash("sha256"),
   request: researchRequestSchema,
   current: persistedRun,
   history: z.array(persistedRun).max(7),
+  checkpoints: z.array(checkpointSchema).max(checkpointLimit).optional(),
 });
 type ResearchRecord = z.infer<typeof recordSchema>;
 type ResearchRun = z.infer<typeof persistedRun>;
@@ -29,7 +37,7 @@ const spec = defineDomain({
   tables: { tasks: domainTable(recordSchema) },
 });
 
-type ErrorCode = "INVALID_REQUEST" | "TASK_NOT_FOUND" | "CONFLICT" | "BUDGET_EXHAUSTED";
+type ErrorCode = "INVALID_REQUEST" | "TASK_NOT_FOUND" | "CONFLICT" | "BUDGET_EXHAUSTED" | "OUTCOME_UNKNOWN";
 export class TaskStoreError extends Error {
   constructor(readonly code: ErrorCode, message: string) {
     super(message);
@@ -95,7 +103,7 @@ export class DshTaskStore {
         schemaVersion, taskId, runId: randomUUID(), status: "queued", revision: 0, eventSeq: 0,
       };
       const current = { state };
-      await this.tasks.put(taskId, { owner: ownerHash, request: parsed, current, history: [] });
+      await this.tasks.put(taskId, { owner: ownerHash, request: parsed, current, history: [], checkpoints: [] });
       return { created: true, run: current };
     });
     this.creationQueue = creation.catch(() => undefined);
@@ -110,8 +118,28 @@ export class DshTaskStore {
     return record;
   }
 
+  result(owner: string, taskId: string) {
+    const { current, checkpoints } = this.get(owner, taskId);
+    if (!checkpoints) return current;
+
+    const settled = checkpoints.filter((entry) => entry.receipt !== undefined).length;
+    const pending = current.state.status === "running"
+      ? checkpoints.filter((entry) => entry.runId === current.state.runId && entry.receipt === undefined).length
+      : 0;
+    return {
+      ...current,
+      usage: {
+        logicalStepsReserved: checkpoints.length,
+        logicalStepsRemaining: checkpointLimit - checkpoints.length,
+        settled,
+        pending,
+        outcomeUnknown: checkpoints.length - settled - pending,
+      },
+    };
+  }
+
   async transition(
-    owner: string, current: TaskState, status: TaskStatus, result?: z.infer<ReturnType<typeof z.json>>,
+    owner: string, current: TaskState, status: TaskStatus, result?: CheckpointValue,
   ): Promise<ResearchRun> {
     this.get(owner, current.taskId);
     const next = await this.tasks.update(current.taskId, (record) => {
@@ -125,9 +153,55 @@ export class DshTaskStore {
     return next.current;
   }
 
+  checkpoints(owner: string, state: TaskState): ResearchCheckpoints {
+    this.get(owner, state.taskId);
+    return {
+      reserve: async (id) => {
+        stepIdSchema.parse(id);
+        let decision: Reservation = "exhausted";
+        await this.tasks.update(state.taskId, (record) => {
+          const entries = this.activeCheckpoints(record, state);
+          const existing = entries.find((checkpoint) => checkpoint.id === id);
+          if (existing) {
+            decision = existing.receipt === undefined ? "unknown" : { receipt: existing.receipt };
+            return record;
+          }
+          if (entries.length >= checkpointLimit) return record;
+          decision = "run";
+          return { ...record, checkpoints: [...entries, { id, runId: state.runId }] };
+        });
+        return decision;
+      },
+      settle: async (id, receipt) => {
+        await this.tasks.update(state.taskId, (record) => {
+          const entries = this.activeCheckpoints(record, state);
+          const entry = entries.find((checkpoint) => checkpoint.id === id);
+          if (!entry || entry.runId !== state.runId || entry.receipt !== undefined) {
+            throw new TaskStoreError("CONFLICT", "The current run does not own this reservation.");
+          }
+          return { ...record, checkpoints: entries.map((checkpoint) =>
+            checkpoint === entry ? { ...entry, receipt } : checkpoint) };
+        });
+      },
+    };
+  }
+
+  private activeCheckpoints(record: ResearchRecord, state: TaskState) {
+    if (record.current.state.runId !== state.runId || record.current.state.status !== "running") {
+      throw new TaskStoreError("CONFLICT", "The run is no longer active.");
+    }
+    if (!record.checkpoints) {
+      throw new TaskStoreError("OUTCOME_UNKNOWN", "This task predates persisted call reservations.");
+    }
+    return record.checkpoints;
+  }
+
   async resume(owner: string, current: TaskState): Promise<ResearchRun> {
     this.get(owner, current.taskId);
     const next = await this.tasks.update(current.taskId, (record) => {
+      if (!record.checkpoints) {
+        throw new TaskStoreError("OUTCOME_UNKNOWN", "This task predates persisted call reservations.");
+      }
       if (record.history.length >= 7) throw new TaskStoreError("BUDGET_EXHAUSTED", "The run limit was reached.");
       const changed = changeTaskState(record.current.state, {
         kind: "resume", runId: current.runId, expectedRevision: current.revision, nextRunId: randomUUID(),

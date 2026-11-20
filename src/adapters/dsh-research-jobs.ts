@@ -1,7 +1,7 @@
 import type { JobId, JobOutcome, JobRegistry } from "@deepseek-ai/dsh-jobs";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { DshTaskStore, TaskStoreError } from "./dsh-task-store.js";
-import type { research, ResearchInput } from "../core/research.js";
+import type { research, ResearchCheckpoints, ResearchInput } from "../core/research.js";
 import type { TaskState } from "../core/contracts.js";
 
 declare module "@deepseek-ai/dsh-jobs/view" {
@@ -11,7 +11,8 @@ declare module "@deepseek-ai/dsh-jobs/view" {
 }
 
 type Owner = NonNullable<ToolRunContext["agent"]>["session"]["id"];
-type Executor = (signal: AbortSignal) => ReturnType<typeof research>;
+type Executor = (signal: AbortSignal, checkpoints: ResearchCheckpoints) => ReturnType<typeof research>;
+type Invocation = Pick<ToolRunContext, "callId" | "rootCallId" | "signal">;
 type ActiveJob = {
   owner: Owner;
   id: JobId;
@@ -28,23 +29,46 @@ export class ResearchJobs {
 
   submit(
     owner: Owner, key: string, input: ResearchInput,
-    exec: Pick<ToolRunContext, "callId" | "rootCallId" | "signal">, run: Executor,
+    exec: Invocation, run: Executor,
   ) {
     const submission = this.start(owner, key, input, exec, run);
+    return this.track(submission);
+  }
+
+  resume(owner: Owner, taskId: string, exec: Invocation, createRun: (input: ResearchInput) => Executor) {
+    return this.track(this.startResume(owner, taskId, exec, createRun));
+  }
+
+  private track<T>(submission: Promise<T>): Promise<T> {
     this.submissions.add(submission);
     return submission.finally(() => this.submissions.delete(submission));
   }
 
+  private async startResume(owner: Owner, taskId: string, exec: Invocation, createRun: (input: ResearchInput) => Executor) {
+    exec.signal.throwIfAborted();
+    if (this.closed) throw new TaskStoreError("CONFLICT", "The research worker is closing.");
+    if (this.active.size >= 2) throw new TaskStoreError("BUDGET_EXHAUSTED", "The research workers are occupied.");
+    const { current, request } = this.store.get(owner, taskId);
+    if (current.state.status !== "interrupted") {
+      throw new TaskStoreError("CONFLICT", "Only an interrupted run can be resumed.");
+    }
+    const next = await this.store.resume(owner, current.state);
+    return this.startJob(owner, next.state, exec, createRun(request));
+  }
+
   private async start(
     owner: Owner, key: string, input: ResearchInput,
-    exec: Pick<ToolRunContext, "callId" | "rootCallId" | "signal">, run: Executor,
+    exec: Invocation, run: Executor,
   ) {
     exec.signal.throwIfAborted();
     if (this.closed) throw new TaskStoreError("CONFLICT", "The research worker is closing.");
     const { created, run: pending } = await this.store.create(owner, key, input);
     if (!created) return { ...pending.state, reused: true };
 
-    const state = pending.state;
+    return this.startJob(owner, pending.state, exec, run);
+  }
+
+  private async startJob(owner: Owner, state: TaskState, exec: Invocation, run: Executor) {
     if (exec.signal.aborted || this.closed) {
       return (await this.store.transition(owner, state, "interrupted")).state;
     }
@@ -80,7 +104,7 @@ export class ResearchJobs {
       signal.throwIfAborted();
       state = (await this.store.transition(owner, state, "running")).state;
       signal.throwIfAborted();
-      const result = await run(signal);
+      const result = await run(signal, this.store.checkpoints(owner, state));
       signal.throwIfAborted();
       const status = result.status === "completed" ? "completed" : result.status === "partial" ? "partial" : "failed";
       await this.store.transition(owner, state, status, result);
@@ -102,7 +126,7 @@ export class ResearchJobs {
   }
 
   result(owner: Owner, taskId: string) {
-    return this.store.get(owner, taskId).current;
+    return this.store.result(owner, taskId);
   }
 
   cancel(owner: Owner, taskId: string) {

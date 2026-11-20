@@ -97,3 +97,21 @@ SOURCEQUEST_SMOKE_STATE=removed dsh web --patch "$lab/smoke.yml" --host 127.0.0.
 ```
 
 fixture 创建两个宿主 Agent，无需模型认证或模型请求。它通过 DSH 执行工具，验证原生作业提交、幂等键、结果与会话归属，再取消进行中的合成查询。成功日志为 `sourcequest-jobs-smoke: native submit, deduplication, result, ownership and cancellation OK`。任务存储重开及旧代际保护由 `npm test` 验证。
+
+
+### 中断与续跑验收
+
+在专门新建的 `DSH_HOME` 内安装构建包。把 [dsh-resume.mjs](../test/fixtures/dsh-resume.mjs) 放在隔离目录，并在 Web profile 中挂载以下补丁：
+
+```yaml
+- id: web
+  config:
+    searchProvider: sourcequest-resume-test
+- insert:
+    - id: sourcequest-resume-smoke
+      name: ./dsh-resume.mjs
+```
+
+1. 用 `SOURCEQUEST_RESUME_STAGE=before` 启动，记录日志中的 task ID。fixture 发出两个查询。隔离数据目录的 `storages/sourcequest_tasks` 下出现 `search:0` 的 receipt 和 `search:1` 的预约后，强制终止这个隔离进程，以模拟运行途中崩溃。
+2. 以同一个隔离 `DSH_HOME` 启动，设置 `SOURCEQUEST_RESUME_STAGE=after` 与 `SOURCEQUEST_RESUME_TASK=<taskId>`。fixture 用宿主恢复原会话，执行 `net_job resume`，检查没有重复搜索，并实际完成剩余的一次公开 URL 读取。
+3. 成功日志为 `sourcequest-resume-smoke: recovered receipt, skipped unknown call and completed remaining work`。
