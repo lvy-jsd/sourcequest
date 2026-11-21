@@ -4,7 +4,7 @@
 
 根据任务自动选择搜索源、模型和读取工具，围绕证据缺口开展有预算的研究，交付能够回到原文的答案与研究记录。首发优先提供 DSH 原生体验，之后扩展 MCP、CLI 和其他客户端。
 
-> **项目状态：开发中。** 在 DSH 0.2.2-rc.5 已接通首条研究链路。`net_research` 通过宿主搜索源收集候选，读取最多三篇公开 HTTPS 页面，并返回有原文链接的引文。
+> **项目状态：v0.1 研究闭环与 G7 扩展架构已落地（离线/契约/E2E 全绿，外部凭据及可选运行时按真实环境标记待测）。** 在 DSH 0.2.2-rc.5 已支持 `net_research`（含 `goal`/`strategy` 有预算子问题循环与兼容预览模式）、`net_job`（含 `list`/`status`/`results`/`cancel`/`resume`/`evidence`）、`sourcequest_doctor` 以及按需扩展工具 `web_extract`、`web_map`、`web_crawl`、`feed_fetch`。
 
 ## 试用首条研究链路
 
@@ -41,7 +41,7 @@
 
 ## 开发验证
 
-使用 Node.js 24，从源码运行 `npm ci`、`npm run check` 和 `npm test`。如需在 DSH 0.2.2-rc.5 中试装，先用 `npm pack` 导出构建包，再按[隔离验收步骤](docs/COMPATIBILITY.md#隔离-profile-验收)验证安装、执行和移除。
+使用 Node.js 24，从源码运行 `npm ci`、`npm run check`、`npm test`、`npm run test:e2e`、`npm run benchmark --silent`、`npm run benchmark:public --silent` 和 `npm run benchmark:50 --silent`。如需在 DSH 0.2.2-rc.5 中试装，先用 `npm pack` 导出构建包，再按[隔离验收步骤](docs/COMPATIBILITY.md#隔离-profile-验收)验证安装、执行和移除。
 
 ## 文档
 

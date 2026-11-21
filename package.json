@@ -17,9 +17,11 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "test": "npm run build && node --test test/*.test.mjs benchmark/*.test.mjs",
+    "test:e2e": "npm run build && node --test test/e2e/*.e2e.test.mjs",
     "benchmark": "npm run build --silent && node benchmark/research-baseline.mjs",
     "benchmark:public": "npm run build --silent && node benchmark/public-evaluation.mjs",
-    "benchmark:public:live": "npm run build --silent && node benchmark/public-evaluation.mjs --live"
+    "benchmark:public:live": "npm run build --silent && node benchmark/public-evaluation.mjs --live",
+    "benchmark:50": "npm run build --silent && node benchmark/eval-50.mjs"
   },
   "dsh": {
     "bundle": {

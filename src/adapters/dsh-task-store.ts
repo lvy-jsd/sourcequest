@@ -118,6 +118,34 @@ export class DshTaskStore {
     return record;
   }
 
+  list(owner: string, options: { limit?: number; cursor?: string } = {}): {
+    items: readonly TaskState[];
+    nextCursor?: string;
+  } {
+    if (!owner) {
+      throw new TaskStoreError("INVALID_REQUEST", "Session owner is required.");
+    }
+    const ownerHash = snapshotHash(owner);
+    const limit = Math.max(1, Math.min(50, Math.trunc(options.limit ?? 20)));
+    const all: TaskState[] = [];
+    for (const [, entry] of this.tasks.entries()) {
+      if (entry.owner === ownerHash) {
+        all.push(entry.current.state);
+      }
+    }
+    all.sort((a, b) => a.taskId.localeCompare(b.taskId));
+    const startIdx = options.cursor ? Math.max(0, all.findIndex((s) => s.taskId > options.cursor!) ) : 0;
+    const effectiveStart = options.cursor && startIdx === 0 && all.length > 0 && all[0].taskId <= options.cursor
+      ? all.length
+      : startIdx;
+    const slice = all.slice(effectiveStart, effectiveStart + limit);
+    const hasMore = effectiveStart + slice.length < all.length;
+    return {
+      items: slice,
+      nextCursor: hasMore && slice.length > 0 ? slice[slice.length - 1].taskId : undefined,
+    };
+  }
+
   result(owner: string, taskId: string) {
     const { current, checkpoints } = this.get(owner, taskId);
     if (!checkpoints) return current;

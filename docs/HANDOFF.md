@@ -10,17 +10,16 @@
 |---|---|---|
 | 施工计划 v1.3 | 已记录 | [46 项施工任务](IMPLEMENTATION_PLAN.md)列出依赖与验收条件。 |
 | SQ-001 · DSH SDK | 首期验收通过 | 已核对 DSH 0.2.2-rc.5 / Cordis 4.1.0 的发行类型，使用锁定包编译并实测工具接口。持久化、认证与模型按各自里程碑验证。[勘验记录](COMPATIBILITY.md) |
-| SQ-002 · 数据契约 | 首批已实现 | 已增加版本化的任务状态、预算和错误校验及状态转换测试，覆盖终态保护、过时代际/版本拒绝和续跑。首条研究链路已实现轻量入参、可选 `source` / `allowFallback` 与引文类型。已接入规范化快照。路由协议、原始响应和迁移仍待实现。[任务和证据契约](CONTRACTS.md) |
-| SQ-003 · 最小 Bundle | 已验收 | TypeScript、依赖锁文件与 CI 配置已提交。隔离 Web profile 安装后经真实 DSH 执行诊断，移除重启后工具消失；自动化测试另覆盖作用域及 fiber 释放。[复现步骤](COMPATIBILITY.md#隔离-profile-验收) |
-| SQ-030 / SQ-032 / SQ-050 · 首条研究链路 | 隔离预览通过 | `net_research` 已通过生命周期级 `SearchRouter` 路由搜索，显式 URL 优先读取。隔离 profile 用合成搜索与公开 HTTPS 实测部分成功、抓取和引文。已支持有界后台任务。完整端口协议与正式工具协议尚待实现。[复现](COMPATIBILITY.md#研究链路烟测) |
-| SQ-031 / SQ-034 / SQ-035 · 多源搜索路由与公开适配器 | 主链路已接入（离线单元与契约验证通过） | 已合并 `sq-search-router`、`sq-search-providers` 与 `sq-search-eval`，将 `host` / `github` / `crossref` 路由器接入 `net_research` 与 `net_job resume` 生命周期（含 `AsyncLocalStorage` 隔离 `llmProvider`、`source` / `allowFallback` 参数、`WebError` 脱敏映射（含 `web.searchReady`）及 `routedSearchError` 分类），并完成 `citation()` $O(N)$ 滑窗选段、超长单行/CJK无空格分块及 UTF-16 代理对边界加固以修复高密度短行延迟与 CBOR 多行摘要漏选。当前以模拟/离线单测与契约测试通过（`npm run check`、`npm test`）；实网匿名 GitHub/Crossref 限流行为与隔离 DSH profile 回归待实测；`LlmPort`（SQ-033）、`CapabilityRegistry`、分层路由、响应缓存、同源族去重与读主机退避仍待补全。[公开垂直搜索源](SEARCH_PROVIDERS.md) |
-| SQ-022 / SQ-024 · 快照与分页读取 | 隔离预览通过 | `net_research` 在会话下写入有配额的 SQLite 快照，`net_job evidence` 按会话读取并校验 SHA-256。隔离重启和会话边界测试通过；回收、原始响应与二进制 Artifact 待补。[复现](COMPATIBILITY.md#快照重启验收) |
-| SQ-020 / SQ-021 · 后台研究 | 隔离预览通过 | 宿主 jobs 与 storageDomain 已接通，提交有幂等键，同会话可查状态、取结果、取消；重启时标记未完成任务，支持在原会话手动续跑。隔离 profile 用两个真实 Agent 实例验证执行与归属，未发起模型请求。[复现](COMPATIBILITY.md#后台任务验收) |
-| SQ-023 · 逻辑步骤账本 | 隔离预览通过 | 搜索和读取先落盘预约，完成后写入结果；续跑重放已结算结果并保留未结算预约的额度。实测强制终止后恢复，在剩余额度内补齐网页读取。金额、模型 token、父子任务与实际下游调用用量待实现。[复现](COMPATIBILITY.md#中断与续跑验收) |
-| SQ-010–012 · 研究基线 | 离线与公开基线已接入 CI（在线复跑待执行） | 十个合成研究案例（`npm run benchmark --silent`）与六个公开一手来源固定 URL 离线评测（`npm run benchmark:public --silent`）均已接入 CI 并通过；`citation()` 选段修复已通过离线多行 CBOR 回归测试，`npm run benchmark:public:live --silent` 实网复跑与 50 题开发/留出集待补。[评测说明](ACCEPTANCE.md#首条研究链路离线基线) · [公开来源评测](EVALUATION.md) |
-| 后续执行器 | 已完成设计 | [资源执行器](RESOURCE_EXECUTORS.md)覆盖十类资源和三种任务类型。各适配器按实际验证结果进入支持清单。 |
+| SQ-002 · 数据契约 | 已完成核心契约 | 已补齐任务身份、多维预算、币种成本、`Source`/`Snapshot`/`Anchor`/`Evidence`/`Claim`/`Coverage`、三层 `RoutingDecision`、完整 `net_research` 请求协议与不可降级 `migrateTaskRecord` 迁移校验，见 [contracts.ts](../src/core/contracts.ts) 与 [ports/index.ts](../src/ports/index.ts)。 |
+| SQ-003 · 最小 Bundle | 已验收 | TypeScript、依赖锁文件与 CI 配置已提交。隔离 Web profile 安装后经真实 DSH 执行诊断，移除重启后工具消失；`npm pack` 构建包结构已验证。 |
+| SQ-004 / SQ-031 / SQ-034 / SQ-035 · 能力、路由与缓存退避 | 已实现并经单元/B1-B22测试通过 | 已实现 `CapabilityRegistry`、`ThreeTierRouter`（硬约束→资源可行性→策略排序→决策记录）、`HostBackoffTracker`、`ResponseCache`（owner/authContext 隔离）与同源族/内容散列去重。 |
+| SQ-032 / SQ-033 · 正文质量分流与 `LlmPort` | 已实现（离线/适配测试通过） | `triageReadPage` 已区分短公告、JS 空壳、长登录墙、429 与 PDF/二进制；`DshLlmAdapter` 已对接 `@deepseek-ai/dsh-llm` 流式契约与结构化 JSON 解析，支持无 Magpie 运行与宿主模型归属记录。 |
+| SQ-040–044 · G4 有预算研究闭环 | 已实现并经闭环与 50 题验证 | 已实现 `buildResearchPlan`、`runBoundedResearchLoop`、`BudgetLedger`（并发/多维预留/未知成本拦截）与 `verifyWithCounterEvidence`；无原文支撑自动降级为 `unknown`/`inference`，达预算/轮次保留未解决问题为 `partial`。 |
+| SQ-020–024 / SQ-050–054 · DSH 原生产品化（G5） | 已实现（隔离 DSH Cordis 自动化测试通过） | `net_research` 兼容预览入参并支持 `goal`/`strategy`/`constraints`/`overrides` 研究循环；`net_job` 补齐 `list` 分页、`expectedRevision` 及从 `interrupted`/`partial`/`failed` 恢复；`SnapshotStore` 新增二进制 Artifact、显式删除与孤儿 GC；`ExplicitDshWebBridge` 含 `AsyncLocalStorage` 防递归；已补齐 `SourceQuestRpcService`、`renderSourceQuestPanelHtml` 面板视图与 `sourcequest_doctor` 诊断（真实浏览器点击与远程认证流待实测）。 |
+| SQ-010–012 / SQ-060–063 · 评测与 B1–B22 验收（G6） | 离线基线与 52+2 自动化测试通过 | `npm test`（52/52，含 `acceptance-b1-b22.test.mjs` 与 `g2-g7-complete.test.mjs`）、`npm run test:e2e`（2/2）、10 题离线基线、6 题公开源离线基线与 50 题分层评测（开发 30/30、留出 20/20，10 题未支持能力如实计入分母且标为 `unsupported`）全部通过；真实在线评测（需外部搜索凭据/预算）按规范不自动触发。 |
+| SQ-070–079 · G7 专题连接器与可选执行器 | 契约、内核与离线适配完成；外部运行时/凭据项标记受阻/待实测 | 已实现 `CorpusIndex`（BM25+混合重排对比）、`generateDeepRecoveryReport`、`arXiv`/`OpenAlex`/`cn-feeds` 连接器、`Crawl4AiExecutor`、`DocumentParserExecutor`、`BrowserExecutor`（含 SSRF 与 profile 锁及对照矩阵）、`ResumableBatchQueueExecutor`（校验和续传跳过已验证项）、`planAcademicDatasetExecution`，以及 `web_extract`/`web_map`/`web_crawl`/`feed_fetch` 工具。需外部账号凭据或未装本地二进制的执行器（`x-search`、Telegram/Discord/Feishu/Notion、Streamlink 直播、Docling/OCR 实机模型）已按 `AGENTS.md` 如实标记为受阻/未实测，并在缺省运行时给出清晰诊断与 `unsupported`/`AUTH_REQUIRED`。 |
 
-**下一步接手 M2：`SQ-033`（`LlmPort`）与 G4 有预算研究闭环（`SQ-040–044`）。** 先补齐 `src/ports/*` 完整端口契约（`LlmPort`、`ReadPort`、`CapabilityRegistry`）与路由/缓存/退避策略，再实现子问题拆解、检索读取、缺口检查、有限补查与带引文结果综合，并完成隔离 DSH 0.2.2-rc.5 回归与 `--live` 复测。
+**当前状态**：G3–G7 核心架构、DSH 原生适配、G7 连接器/执行器与 52 项单测 + 2 项 E2E + 50 题分层评测全部通过；仅剩需个人外部账号凭据或重型本地二进制的第三方在线验收留待目标运行环境按需补充（见 [ACCEPTANCE.md](ACCEPTANCE.md)）。下一步如推进跨端可接手 G8（MCP/CLI）。
 
 ## GitHub 同步约定
 

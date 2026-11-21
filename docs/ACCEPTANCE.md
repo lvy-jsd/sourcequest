@@ -1,6 +1,6 @@
 # 验收、评测与发布门槛
 
-本文件定义待执行的验证。当前没有实现、在线基准成绩或兼容性验收结果。
+本文件定义验证体系与发布门槛。核心契约、B1–B22 场景（[acceptance-b1-b22.test.mjs](../test/acceptance-b1-b22.test.mjs)）、50 题分层离线评测（[eval-50.mjs](../benchmark/eval-50.mjs)）及端到端挂载卸载（[complete.e2e.test.mjs](../test/e2e/complete.e2e.test.mjs)）已接入自动化验证；需第三方凭据/在线配额/本地重型二进制的场景按真实条件标记受阻或未实测。
 
 ## 1. 验证层级
 
