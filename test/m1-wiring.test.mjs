@@ -269,3 +269,79 @@ test("DshTaskStore preserves legacy idempotency while persisting optional source
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("createHostSearch maps WebError and propagates caller aborts thrown from web.searchReady()", async () => {
+  const scenario = { mode: "cred-missing", onReady: undefined };
+  let searchCalls = 0;
+  let fetchCalls = 0;
+
+  await withMountedSourcequest(async (url) => {
+    fetchCalls++;
+    const href = String(url);
+    if (href.startsWith("https://api.github.com/search/repositories")) {
+      return Response.json({ items: [] });
+    }
+    if (href.startsWith("https://api.crossref.org/works")) {
+      return Response.json({ message: { items: [] } });
+    }
+    assert.fail(`Unexpected fetch URL: ${href}`);
+  }, async ({ ctx, netResearch }) => {
+    ctx.web.registerSearchProvider({
+      id: "ready-throw-host",
+      available: () => true,
+      async ready() {
+        switch (scenario.mode) {
+          case "cred-missing":
+            throw new WebError("secret-ready-cred at https://internal.invalid", "WEB_PROVIDER_CREDENTIAL_MISSING");
+          case "configured-missing":
+            throw new WebError("secret-ready-missing-id", "WEB_PROVIDER_CONFIGURED_MISSING");
+          case "aborted":
+            throw new WebError("secret-ready-aborted", "WEB_ABORTED");
+          case "caller-aborted":
+            scenario.onReady?.();
+            throw new WebError("secret-caller-abort", "WEB_ABORTED");
+          default:
+            return true;
+        }
+      },
+      async search() {
+        searchCalls++;
+        return { sources: [], truncated: false };
+      },
+    });
+
+    const exec = (args, signal = new AbortController().signal) => netResearch.execute(args, { signal });
+
+    // 1) ready() throws WEB_PROVIDER_CREDENTIAL_MISSING -> mapped to AUTH_REQUIRED, no leak
+    scenario.mode = "cred-missing";
+    const credMissing = await exec({ queries: ["q"], source: "host" });
+    assert.deepEqual(credMissing.issues.map((i) => i.code), ["AUTH_REQUIRED"]);
+    assert.equal(JSON.stringify(credMissing).includes("secret-ready-cred"), false);
+    assert.equal(searchCalls, 0);
+
+    // 2) ready() throws WEB_PROVIDER_CONFIGURED_MISSING -> pinned SEARCH_FAILED, auto falls back to public providers
+    scenario.mode = "configured-missing";
+    const missingPinned = await exec({ queries: ["q"], source: "host" });
+    assert.deepEqual(missingPinned.issues.map((i) => i.code), ["SEARCH_FAILED"]);
+    assert.equal(JSON.stringify(missingPinned).includes("secret-ready-missing-id"), false);
+
+    const missingAuto = await exec({ queries: ["q"], source: "auto" });
+    assert.equal(fetchCalls, 2);
+    assert.deepEqual(missingAuto.issues.map((i) => i.code), ["SEARCH_FAILED"]);
+    assert.equal(JSON.stringify(missingAuto).includes("secret-ready-missing-id"), false);
+
+    // 3) ready() throws WEB_ABORTED without caller abort -> sanitized SEARCH_FAILED
+    scenario.mode = "aborted";
+    const providerAborted = await exec({ queries: ["q"], source: "host" });
+    assert.deepEqual(providerAborted.issues.map((i) => i.code), ["SEARCH_FAILED"]);
+    assert.equal(JSON.stringify(providerAborted).includes("secret-ready-aborted"), false);
+
+    // 4) ready() throws WEB_ABORTED when caller signal is aborted -> propagates caller abort reason
+    scenario.mode = "caller-aborted";
+    const controller = new AbortController();
+    const callerReason = new Error("caller aborted during searchReady");
+    scenario.onReady = () => controller.abort(callerReason);
+    await assert.rejects(exec({ queries: ["q"], source: "host" }, controller.signal), (err) => err === callerReason);
+    assert.equal(searchCalls, 0);
+  });
+});

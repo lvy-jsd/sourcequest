@@ -96,11 +96,12 @@ function createHostSearch(web: WebRuntime): SearchProvider {
     id: "host",
     async search(query, maxResults, searchSignal) {
       const llmProvider = hostLlmProvider.getStore();
-      if (!await web.searchReady(llmProvider)) {
-        throw new SearchProviderError("auth_required", "The configured DSH search provider needs credentials.");
-      }
-      searchSignal.throwIfAborted();
       try {
+        searchSignal.throwIfAborted();
+        if (!await web.searchReady(llmProvider)) {
+          throw new SearchProviderError("auth_required", "The configured DSH search provider needs credentials.");
+        }
+        searchSignal.throwIfAborted();
         const { sources } = await web.search({ query, maxResults, llmProvider }, searchSignal);
         return sources;
       } catch (error) {

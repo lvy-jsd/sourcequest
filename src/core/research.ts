@@ -107,124 +107,639 @@ function segmentWords(text: string): string[] {
     .map((piece) => piece.segment);
 }
 
-function matchFocusTokens(lowerText: string, words: readonly string[]): number[] {
-  const asciiWords = new Set(lowerText.match(/[a-z0-9]+/gu) ?? []);
-  const matched: number[] = [];
-  for (let index = 0; index < words.length; index++) {
-    const word = words[index];
-    if (/^[a-z0-9]+$/u.test(word)) {
-      if (asciiWords.has(word)) matched.push(index);
-    } else if (lowerText.includes(word)) {
-      matched.push(index);
-    }
+function isAsciiAlnum(c: number): boolean {
+  return (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || (c >= 65 && c <= 90);
+}
+
+function isWhitespaceCode(c: number): boolean {
+  return c === 32 || c === 9 || c === 10 || c === 11 || c === 12 || c === 13 || c === 0xa0;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+function trimTrailingHighSurrogate(text: string): string {
+  return text.replace(/[\uD800-\uDBFF]$/u, "");
+}
+
+function normalizeDocumentText(text: string): string {
+  if (!/[^\S\n ]| {2,}| \n|\n |\n\n/u.test(text)) {
+    return text.trim();
   }
-  return matched;
+  return text
+    .replace(/\r\n?/gu, "\n")
+    .replace(/ *[^\S\n ][^\S\n]*| {2,}/gu, " ")
+    .replace(/ *\n */gu, "\n")
+    .replace(/\n{2,}/gu, "\n")
+    .trim();
+}
+
+class IntVec {
+  buf: Int32Array;
+  len = 0;
+
+  constructor(initCap = 4096) {
+    this.buf = new Int32Array(initCap);
+  }
+
+  push(v: number): void {
+    if (this.len === this.buf.length) {
+      const next = new Int32Array(this.buf.length << 1);
+      next.set(this.buf);
+      this.buf = next;
+    }
+    this.buf[this.len++] = v;
+  }
+}
+
+function pushBoundedChunks(
+  doc: string,
+  segStart: number,
+  segEnd: number,
+  chunkStarts: IntVec,
+  chunkEnds: IntVec,
+): void {
+  if (segEnd - segStart <= excerptLimit) {
+    if (segEnd > segStart || segStart === 0) {
+      chunkStarts.push(segStart);
+      chunkEnds.push(segEnd);
+    }
+    return;
+  }
+  const subStep = 400;
+  const searchRadius = 80;
+  let pos = segStart;
+  while (segEnd - pos > excerptLimit) {
+    const target = pos + subStep;
+    const minSplit = Math.max(pos + 120, target - searchRadius);
+    const maxSplit = Math.min(segEnd - 120, target + searchRadius);
+    let split = -1;
+
+    for (let d = 0; d <= searchRadius; d++) {
+      const right = target + d;
+      if (right <= maxSplit && isWhitespaceCode(doc.charCodeAt(right))) {
+        split = right + 1;
+        while (split < segEnd - 1 && isWhitespaceCode(doc.charCodeAt(split))) split++;
+        if (split >= segEnd) split = right;
+        break;
+      }
+      const left = target - d;
+      if (d > 0 && left >= minSplit && isWhitespaceCode(doc.charCodeAt(left))) {
+        split = left + 1;
+        while (split < segEnd - 1 && isWhitespaceCode(doc.charCodeAt(split))) split++;
+        if (split >= segEnd) split = left;
+        break;
+      }
+    }
+
+    if (split === -1) {
+      for (let d = 0; d <= searchRadius; d++) {
+        const right = target + d;
+        if (right <= maxSplit && !isAsciiAlnum(doc.charCodeAt(right))) {
+          split = right;
+          break;
+        }
+        const left = target - d;
+        if (d > 0 && left >= minSplit && !isAsciiAlnum(doc.charCodeAt(left))) {
+          split = left;
+          break;
+        }
+      }
+    }
+
+    if (split === -1) split = target;
+    if (
+      split > pos
+      && split < segEnd
+      && isHighSurrogate(doc.charCodeAt(split - 1))
+      && isLowSurrogate(doc.charCodeAt(split))
+    ) {
+      if (split - 1 > pos) split--;
+      else if (split + 1 < segEnd) split++;
+    }
+
+    chunkStarts.push(pos);
+    chunkEnds.push(split);
+    pos = split;
+  }
+  if (pos < segEnd) {
+    chunkStarts.push(pos);
+    chunkEnds.push(segEnd);
+  }
+}
+
+function buildChunks(document: string) {
+  const initCap = Math.min(document.length + 1, 16384);
+  const chunkStarts = new IntVec(initCap);
+  const chunkEnds = new IntVec(initCap);
+  const n = document.length;
+  let lineStart = 0;
+  while (lineStart <= n) {
+    const nl = document.indexOf("\n", lineStart);
+    const lineEnd = nl === -1 ? n : nl;
+    if (lineEnd - lineStart <= excerptLimit) {
+      chunkStarts.push(lineStart);
+      chunkEnds.push(lineEnd);
+    } else {
+      const line = document.slice(lineStart, lineEnd);
+      let subStart = 0;
+      for (const match of line.matchAll(/(?<=[。！？])\s*|(?<=[.!?])\s+/gu)) {
+        const splitAt = (match.index ?? 0) + match[0].length;
+        if (splitAt - subStart >= 120) {
+          pushBoundedChunks(document, lineStart + subStart, lineStart + splitAt, chunkStarts, chunkEnds);
+          subStart = splitAt;
+        }
+      }
+      if (subStart < line.length) {
+        pushBoundedChunks(document, lineStart + subStart, lineEnd, chunkStarts, chunkEnds);
+      }
+    }
+    if (nl === -1) break;
+    lineStart = nl + 1;
+  }
+  return {
+    chunkStarts: chunkStarts.buf,
+    chunkEnds: chunkEnds.buf,
+    numChunks: chunkStarts.len,
+  };
+}
+
+function lowerBound(arr: Int32Array, len: number, target: number): number {
+  let lo = 0;
+  let hi = len;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (arr[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function selectQuoteStart(document: string, focus: string): number {
   const focusTokens = segmentWords(focus);
   const words = [...new Set(focusTokens)];
-  if (!words.length) return 0;
+  const wordCount = words.length;
+  if (!wordCount) return 0;
 
-  const chunks: { offset: number; text: string; lower: string; matched: number[] }[] = [];
-  let offset = 0;
-  for (const line of document.split("\n")) {
-    if (line.length <= excerptLimit) {
-      const lower = line.toLowerCase();
-      chunks.push({ offset, text: line, lower, matched: matchFocusTokens(lower, words) });
+  const wordIndex = new Map<string, number>();
+  const asciiWordToId = new Map<string, number>();
+  const singleAscii = new Int32Array(128).fill(-1);
+  const singleNonAscii = new Int32Array(65536).fill(-1);
+  const multiNonAsciiWords: { id: number; word: string }[] = [];
+  let hasNonAsciiWords = false;
+
+  for (let i = 0; i < wordCount; i++) {
+    const w = words[i];
+    wordIndex.set(w, i);
+    if (/^[a-z0-9]+$/u.test(w)) {
+      asciiWordToId.set(w, i);
+      if (w.length === 1) singleAscii[w.charCodeAt(0)] = i;
     } else {
-      let subStart = 0;
-      for (const match of line.matchAll(/(?<=[.!?。！？])\s+/gu)) {
-        const splitAt = (match.index ?? 0) + match[0].length;
-        if (splitAt - subStart >= 120) {
-          const slice = line.slice(subStart, splitAt);
-          const lower = slice.toLowerCase();
-          chunks.push({ offset: offset + subStart, text: slice, lower, matched: matchFocusTokens(lower, words) });
-          subStart = splitAt;
-        }
-      }
-      const tail = line.slice(subStart);
-      const lower = tail.toLowerCase();
-      chunks.push({ offset: offset + subStart, text: tail, lower, matched: matchFocusTokens(lower, words) });
+      hasNonAsciiWords = true;
+      if (w.length === 1) singleNonAscii[w.charCodeAt(0)] = i;
+      else multiNonAsciiWords.push({ id: i, word: w });
     }
-    offset += line.length + 1;
   }
 
-  const df = new Float64Array(words.length);
-  for (const chunk of chunks) {
-    for (const tokenIndex of chunk.matched) df[tokenIndex]++;
-  }
-  const idf = words.map((_, tokenIndex) => Math.log(1 + chunks.length / (1 + df[tokenIndex])));
+  const { chunkStarts, chunkEnds, numChunks } = buildChunks(document);
+  if (!numChunks) return 0;
 
-  const wordIndex = new Map(words.map((word, index) => [word, index]));
-  const bigrams: { pattern: RegExp | null; raw: string[]; bonus: number }[] = [];
+  let docForMatch = document;
+  const hasUpperTurkishI = document.includes("\u0130");
+  if (hasNonAsciiWords || hasUpperTurkishI) {
+    docForMatch = hasUpperTurkishI
+      ? document.replace(/\u0130/gu, "i").toLowerCase()
+      : document.toLowerCase();
+  }
+
+  const hasMultiNonAscii = multiNonAsciiWords.length > 0;
+  const multiFirstMap = hasMultiNonAscii ? new Map<number, { id: number; word: string }[]>() : null;
+  const multiFirstFlag = hasMultiNonAscii ? new Uint8Array(65536) : null;
+  if (hasMultiNonAscii && multiFirstFlag && multiFirstMap) {
+    for (const entry of multiNonAsciiWords) {
+      const first = entry.word.charCodeAt(0);
+      multiFirstFlag[first] = 1;
+      let bucket = multiFirstMap.get(first);
+      if (!bucket) multiFirstMap.set(first, (bucket = []));
+      bucket.push(entry);
+    }
+  }
+
+  type NonAsciiBgTarget = { b: string; bLen: number; bChar0: number; isBAscii: boolean; bgIdx: number };
+  const bigramIndexMap = new Map<number, number>();
+  const bigramPairs: { aId: number; bId: number; mult: number }[] = [];
+  const asciiBgByA: (Map<number, number> | undefined)[] = new Array(wordCount);
+  const nonAsciiBgByA: (NonAsciiBgTarget[] | undefined)[] = new Array(wordCount);
+  let hasAnyNonAsciiBg = false;
+
   for (let i = 0; i + 1 < focusTokens.length; i++) {
     const a = focusTokens[i];
     const b = focusTokens[i + 1];
     if (a === b) continue;
-    const bonus = 0.5 * (idf[wordIndex.get(a)!] + idf[wordIndex.get(b)!]);
-    const isAsciiPair = /^[a-z0-9]+$/u.test(a) && /^[a-z0-9]+$/u.test(b);
-    bigrams.push({
-      pattern: isAsciiPair ? new RegExp(`(?:^|[^a-z0-9])${a} ${b}(?=$|[^a-z0-9])`, "u") : null,
-      raw: isAsciiPair ? [] : [`${a}${b}`, `${a} ${b}`],
-      bonus,
-    });
+    const aId = wordIndex.get(a)!;
+    const bId = wordIndex.get(b)!;
+    const key = aId * wordCount + bId;
+    let bgIdx = bigramIndexMap.get(key);
+    if (bgIdx === undefined) {
+      const isA = asciiWordToId.has(a);
+      const isB = asciiWordToId.has(b);
+      bgIdx = bigramPairs.length;
+      bigramIndexMap.set(key, bgIdx);
+      bigramPairs.push({ aId, bId, mult: 1 });
+      if (isA && isB) {
+        let inner = asciiBgByA[aId];
+        if (!inner) asciiBgByA[aId] = (inner = new Map());
+        inner.set(bId, bgIdx);
+      } else {
+        hasAnyNonAsciiBg = true;
+        let list = nonAsciiBgByA[aId];
+        if (!list) nonAsciiBgByA[aId] = (list = []);
+        list.push({ b, bLen: b.length, bChar0: b.charCodeAt(0), isBAscii: isB, bgIdx });
+      }
+    } else {
+      bigramPairs[bgIdx].mult++;
+    }
   }
 
-  let start = 0;
-  let bestScore = -1;
-  let bestStartScore = -1;
+  const df = new Int32Array(wordCount);
+  const lastChunkOfToken = new Int32Array(wordCount).fill(-1);
+  const chunkHasHit = new Uint8Array(numChunks);
 
-  for (let i = 0; i < chunks.length; i++) {
-    if (!chunks[i].matched.length) continue;
-    const winStart = chunks[i].offset;
-    const winEnd = winStart + excerptLimit;
-    const bestDecay = new Float64Array(words.length);
+  const hitInitCap = Math.min(document.length + 1, 16384);
+  const hitChunkVec = new IntVec(hitInitCap);
+  const hitTokenVec = new IntVec(hitInitCap);
+  const hitEndVec = new IntVec(hitInitCap);
 
-    for (let j = i; j < chunks.length && chunks[j].offset < winEnd; j++) {
-      const chunk = chunks[j];
-      const decay = 1 - 0.15 * ((chunk.offset - winStart) / excerptLimit);
-      const remaining = winEnd - chunk.offset;
-      const hits = chunk.text.length <= remaining
-        ? chunk.matched
-        : matchFocusTokens(chunk.lower.slice(0, remaining), words);
-      for (const tokenIndex of hits) {
-        if (decay > bestDecay[tokenIndex]) bestDecay[tokenIndex] = decay;
+  const bgCount = bigramPairs.length;
+  const bgEnds = Array.from({ length: bgCount }, () => new IntVec(64));
+  const bgExitChunks = Array.from({ length: bgCount }, () => new IntVec(64));
+
+  const docLen = document.length;
+  let chunkIdx = 0;
+  let pos = 0;
+  let prevAsciiId = -1;
+  let prevAsciiStart = 0;
+  let prevAsciiChunk = 0;
+  let onlyWsSincePrevAscii = false;
+
+  const checkNonAsciiBgFrom = (aId: number, aChunk: number, aStart: number, aEnd: number) => {
+    const bgList = nonAsciiBgByA[aId];
+    if (!bgList) return;
+    let afterWs = aEnd;
+    while (afterWs < docLen && isWhitespaceCode(docForMatch.charCodeAt(afterWs))) afterWs++;
+    if (afterWs >= docLen) return;
+    const nextChar = docForMatch.charCodeAt(afterWs);
+    for (let m = 0; m < bgList.length; m++) {
+      const bg = bgList[m];
+      if (bg.bChar0 !== nextChar) continue;
+      const bLen = bg.bLen;
+      if (afterWs + bLen > docLen) continue;
+      if (bLen === 1 || docForMatch.startsWith(bg.b, afterWs)) {
+        if (!bg.isBAscii || afterWs + bLen === docLen || !isAsciiAlnum(docForMatch.charCodeAt(afterWs + bLen))) {
+          if (afterWs + bLen - aStart <= excerptLimit) {
+            bgEnds[bg.bgIdx].push(afterWs + bLen);
+            bgExitChunks[bg.bgIdx].push(aChunk + 1);
+          }
+        }
       }
     }
+  };
 
-    let score = 0;
-    for (let t = 0; t < words.length; t++) score += bestDecay[t] * idf[t];
+  while (pos < docLen) {
+    while (chunkIdx < numChunks && pos >= chunkEnds[chunkIdx]) chunkIdx++;
+    if (chunkIdx >= numChunks) break;
 
-    if (bigrams.length) {
-      const windowNorm = document.slice(winStart, winEnd).replace(/\s+/gu, " ").toLowerCase();
-      for (const { pattern, raw, bonus } of bigrams) {
-        if (pattern ? pattern.test(windowNorm) : raw.some((phrase) => windowNorm.includes(phrase))) {
-          score += bonus;
+    const c = docForMatch.charCodeAt(pos);
+    if (pos < chunkStarts[chunkIdx]) {
+      if (!isWhitespaceCode(c)) onlyWsSincePrevAscii = false;
+      pos++;
+      continue;
+    }
+
+    if (hasNonAsciiWords) {
+      const singleId = singleNonAscii[c];
+      if (singleId !== -1) {
+        if (lastChunkOfToken[singleId] !== chunkIdx) {
+          lastChunkOfToken[singleId] = chunkIdx;
+          df[singleId]++;
+          chunkHasHit[chunkIdx] = 1;
+          hitChunkVec.push(chunkIdx);
+          hitTokenVec.push(singleId);
+          hitEndVec.push(pos + 1);
+        }
+        if (hasAnyNonAsciiBg && nonAsciiBgByA[singleId]) {
+          checkNonAsciiBgFrom(singleId, chunkIdx, pos, pos + 1);
+        }
+      }
+      if (hasMultiNonAscii && multiFirstFlag![c]) {
+        const bucket = multiFirstMap!.get(c)!;
+        const maxEnd = Math.min(docLen, chunkStarts[chunkIdx] + excerptLimit);
+        for (let k = 0; k < bucket.length; k++) {
+          const entry = bucket[k];
+          const wLen = entry.word.length;
+          if (pos + wLen <= maxEnd && docForMatch.startsWith(entry.word, pos)) {
+            const tokId = entry.id;
+            if (lastChunkOfToken[tokId] !== chunkIdx) {
+              lastChunkOfToken[tokId] = chunkIdx;
+              df[tokId]++;
+              chunkHasHit[chunkIdx] = 1;
+              hitChunkVec.push(chunkIdx);
+              hitTokenVec.push(tokId);
+              hitEndVec.push(pos + wLen);
+            }
+            if (hasAnyNonAsciiBg && nonAsciiBgByA[tokId]) {
+              checkNonAsciiBgFrom(tokId, chunkIdx, pos, pos + wLen);
+            }
+          }
         }
       }
     }
 
-    let startScore = 0;
-    for (const tokenIndex of chunks[i].matched) startScore += idf[tokenIndex];
+    if (isAsciiAlnum(c)) {
+      const start = pos;
+      let hasUpper = c >= 65 && c <= 90;
+      pos++;
+      while (pos < docLen) {
+        const c2 = docForMatch.charCodeAt(pos);
+        if ((c2 >= 97 && c2 <= 122) || (c2 >= 48 && c2 <= 57)) pos++;
+        else if (c2 >= 65 && c2 <= 90) {
+          hasUpper = true;
+          pos++;
+        } else break;
+      }
+
+      let tokId: number;
+      if (pos - start === 1) {
+        tokId = singleAscii[hasUpper ? (c | 32) : c];
+      } else {
+        const tokStr = hasUpper ? docForMatch.slice(start, pos).toLowerCase() : docForMatch.slice(start, pos);
+        tokId = asciiWordToId.get(tokStr) ?? -1;
+      }
+
+      if (tokId !== -1) {
+        const maxEnd = chunkStarts[chunkIdx] + excerptLimit;
+        if (lastChunkOfToken[tokId] !== chunkIdx) {
+          lastChunkOfToken[tokId] = chunkIdx;
+          df[tokId]++;
+          chunkHasHit[chunkIdx] = 1;
+          hitChunkVec.push(chunkIdx);
+          hitTokenVec.push(tokId);
+          hitEndVec.push(pos < maxEnd ? pos : maxEnd);
+        }
+        if (onlyWsSincePrevAscii && prevAsciiId !== -1) {
+          const bgIdx = asciiBgByA[prevAsciiId]?.get(tokId);
+          if (bgIdx !== undefined && pos - prevAsciiStart <= excerptLimit) {
+            bgEnds[bgIdx].push(pos);
+            bgExitChunks[bgIdx].push(prevAsciiChunk + 1);
+          }
+        }
+        if (hasAnyNonAsciiBg && nonAsciiBgByA[tokId]) {
+          checkNonAsciiBgFrom(tokId, chunkIdx, start, pos);
+        }
+        prevAsciiId = tokId;
+        prevAsciiStart = start;
+        prevAsciiChunk = chunkIdx;
+        onlyWsSincePrevAscii = true;
+      } else {
+        prevAsciiId = -1;
+        onlyWsSincePrevAscii = false;
+      }
+
+      if (hasMultiNonAscii) {
+        const maxEnd = Math.min(docLen, chunkStarts[chunkIdx] + excerptLimit);
+        for (let p2 = start + 1; p2 < pos; p2++) {
+          const c2 = docForMatch.charCodeAt(p2);
+          if (multiFirstFlag![c2]) {
+            const bucket2 = multiFirstMap!.get(c2)!;
+            for (let k = 0; k < bucket2.length; k++) {
+              const entry = bucket2[k];
+              const wLen = entry.word.length;
+              if (p2 + wLen <= maxEnd && docForMatch.startsWith(entry.word, p2)) {
+                const tokId2 = entry.id;
+                if (lastChunkOfToken[tokId2] !== chunkIdx) {
+                  lastChunkOfToken[tokId2] = chunkIdx;
+                  df[tokId2]++;
+                  chunkHasHit[chunkIdx] = 1;
+                  hitChunkVec.push(chunkIdx);
+                  hitTokenVec.push(tokId2);
+                  hitEndVec.push(p2 + wLen);
+                }
+                if (hasAnyNonAsciiBg && nonAsciiBgByA[tokId2]) {
+                  checkNonAsciiBgFrom(tokId2, chunkIdx, p2, p2 + wLen);
+                }
+              }
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    if (!isWhitespaceCode(c)) onlyWsSincePrevAscii = false;
+    pos++;
+  }
+
+  const totalHits = hitChunkVec.len;
+  if (!totalHits) return 0;
+
+  const hitChunk = hitChunkVec.buf;
+  const hitToken = hitTokenVec.buf;
+  const hitEnd = hitEndVec.buf;
+
+  let isEndSorted = true;
+  for (let h = 1; h < totalHits; h++) {
+    if (hitEnd[h] < hitEnd[h - 1]) {
+      isEndSorted = false;
+      break;
+    }
+  }
+
+  let orderByEnd: Int32Array | null = null;
+  if (!isEndSorted) {
+    orderByEnd = new Int32Array(totalHits);
+    if (docLen <= 2_000_000) {
+      const counts = new Int32Array(docLen + 1);
+      for (let h = 0; h < totalHits; h++) counts[hitEnd[h]]++;
+      let sum = 0;
+      for (let e = 0; e <= docLen; e++) {
+        const cnt = counts[e];
+        counts[e] = sum;
+        sum += cnt;
+      }
+      for (let h = 0; h < totalHits; h++) {
+        orderByEnd[counts[hitEnd[h]]++] = h;
+      }
+    } else {
+      for (let h = 0; h < totalHits; h++) orderByEnd[h] = h;
+      orderByEnd.sort((a, b) => hitEnd[a] - hitEnd[b] || a - b);
+    }
+  }
+
+  const idfScale = wordCount <= 500 && document.length <= 2_000_000 ? 10000 : 100;
+  const idfInt = new Float64Array(wordCount);
+  for (let t = 0; t < wordCount; t++) {
+    idfInt[t] = Math.round(Math.log(1 + numChunks / (1 + df[t])) * idfScale);
+  }
+
+  const bgDiff = new Float64Array(numChunks + 1);
+  for (let b = 0; b < bgCount; b++) {
+    const endsVec = bgEnds[b];
+    const mLen = endsVec.len;
+    if (!mLen) continue;
+    const exitsVec = bgExitChunks[b];
+    const ends = endsVec.buf;
+    const exits = exitsVec.buf;
+    const { aId, bId, mult } = bigramPairs[b];
+    const bonusInt = Math.round(0.5 * (idfInt[aId] + idfInt[bId])) * mult;
+    let prevR = 0;
+    if (mLen >= numChunks / 8) {
+      let lPtr = 0;
+      for (let m = 0; m < mLen; m++) {
+        const enterMin = ends[m] - excerptLimit;
+        while (lPtr < numChunks && chunkStarts[lPtr] < enterMin) lPtr++;
+        const r = exits[m];
+        const l = Math.max(lPtr, prevR);
+        if (l < r) {
+          bgDiff[l] += bonusInt;
+          bgDiff[r] -= bonusInt;
+          prevR = r;
+        }
+      }
+    } else {
+      for (let m = 0; m < mLen; m++) {
+        const enterMin = ends[m] - excerptLimit;
+        const r = exits[m];
+        let l = lowerBound(chunkStarts, r, enterMin);
+        if (l < prevR) l = prevR;
+        if (l < r) {
+          bgDiff[l] += bonusInt;
+          bgDiff[r] -= bonusInt;
+          prevR = r;
+        }
+      }
+    }
+  }
+
+  const nextHit1 = new Int32Array(totalHits);
+  const lastOcc1 = new Int32Array(wordCount);
+  const chunkStartScore = new Float64Array(numChunks);
+  for (let h = 0; h < totalHits; h++) {
+    const c = hitChunk[h];
+    const t = hitToken[h];
+    chunkStartScore[c] += idfInt[t];
+    const prev1 = lastOcc1[t];
+    if (prev1 !== 0) nextHit1[prev1 - 1] = h + 1;
+    lastOcc1[t] = h + 1;
+  }
+
+  const activeHead1 = new Int32Array(wordCount);
+  const activeTail1 = new Int32Array(wordCount);
+
+  let leftHit = 0;
+  let rightPtr = 0;
+  let s1 = 0;
+  let s2 = 0;
+  let runningBg = 0;
+
+  let bestStart = 0;
+  let bestScore = -1;
+  let bestStartScore = -1;
+
+  for (let i = 0; i < numChunks; i++) {
+    runningBg += bgDiff[i];
+    while (leftHit < totalHits && hitChunk[leftHit] < i) {
+      const t = hitToken[leftHit];
+      if (activeHead1[t] === leftHit + 1) {
+        const c = hitChunk[leftHit];
+        s1 -= idfInt[t];
+        s2 -= idfInt[t] * chunkStarts[c];
+        if (activeHead1[t] === activeTail1[t]) {
+          activeHead1[t] = 0;
+          activeTail1[t] = 0;
+        } else {
+          const next1 = nextHit1[leftHit];
+          activeHead1[t] = next1;
+          s1 += idfInt[t];
+          s2 += idfInt[t] * chunkStarts[hitChunk[next1 - 1]];
+        }
+      }
+      leftHit++;
+    }
+    if (!chunkHasHit[i]) continue;
+
+    const winStart = chunkStarts[i];
+    const winEnd = winStart + excerptLimit;
+
+    if (orderByEnd === null) {
+      while (rightPtr < totalHits && hitEnd[rightPtr] <= winEnd) {
+        const c = hitChunk[rightPtr];
+        if (c >= i) {
+          const t = hitToken[rightPtr];
+          if (activeHead1[t] === 0) {
+            activeHead1[t] = rightPtr + 1;
+            activeTail1[t] = rightPtr + 1;
+            s1 += idfInt[t];
+            s2 += idfInt[t] * chunkStarts[c];
+          } else {
+            activeTail1[t] = rightPtr + 1;
+          }
+        }
+        rightPtr++;
+      }
+    } else {
+      while (rightPtr < totalHits) {
+        const h = orderByEnd[rightPtr];
+        if (hitEnd[h] > winEnd) break;
+        const c = hitChunk[h];
+        if (c >= i) {
+          const t = hitToken[h];
+          if (activeHead1[t] === 0) {
+            activeHead1[t] = h + 1;
+            activeTail1[t] = h + 1;
+            s1 += idfInt[t];
+            s2 += idfInt[t] * chunkStarts[c];
+          } else {
+            activeTail1[t] = h + 1;
+          }
+        }
+        rightPtr++;
+      }
+    }
+
+    const score = (17000 + 3 * winStart) * s1 - 3 * s2 + 17000 * runningBg;
+    const startScore = chunkStartScore[i];
 
     if (score > bestScore || (score === bestScore && startScore > bestStartScore)) {
       bestScore = score;
       bestStartScore = startScore;
-      start = winStart;
+      bestStart = winStart;
     }
   }
-  return start;
+
+  return bestStart;
 }
 
 function citation(url: string, page: ReadPage, focus: string, save?: ResearchPort["saveSnapshot"]) {
-  const document = page.text.replace(/\r\n?/gu, "\n").split("\n")
-    .map((line) => line.replace(/[^\S\n]+/gu, " ").trim()).filter(Boolean).join("\n");
+  const document = normalizeDocumentText(page.text);
   if (!document) throw new ResearchError("UNUSABLE_BODY", "The page had no readable text.");
-  const start = selectQuoteStart(document, focus);
+  let start = selectQuoteStart(document, focus);
+  if (
+    start > 0
+    && start < document.length
+    && isHighSurrogate(document.charCodeAt(start - 1))
+    && isLowSurrogate(document.charCodeAt(start))
+  ) {
+    start--;
+  }
   let quote = document.slice(start, start + excerptLimit).trimEnd();
   // Preserve UTF-16 coordinates without returning half of a surrogate pair.
-  quote = quote.replace(/[\uD800-\uDBFF]$/u, "");
+  quote = trimTrailingHighSurrogate(quote).trimEnd();
+  if (!quote) throw new ResearchError("UNUSABLE_BODY", "The page had no readable text.");
   const digest = snapshotHash(document);
   let snapshotSaved = false;
   if (save) {
@@ -236,7 +751,8 @@ function citation(url: string, page: ReadPage, focus: string, save?: ResearchPor
     }
   }
   return evidenceSchema.parse({
-    requestedUrl: url, finalUrl: page.finalUrl, mime: page.mime, title: page.title.slice(0, 200),
+    requestedUrl: url, finalUrl: page.finalUrl, mime: page.mime,
+    title: trimTrailingHighSurrogate(page.title.slice(0, 200)),
     fetchedAt: new Date().toISOString(),
     snapshotHash: digest, snapshotSaved,
     coordinateSpace: "normalized-text-v1-utf16",
@@ -343,7 +859,9 @@ export async function research(
           continue;
         }
         eligible.push(sourceSchema.parse({
-          url, title: hit.title?.slice(0, 200) ?? "", snippet: hit.snippet?.slice(0, 280) ?? "",
+          url,
+          title: trimTrailingHighSurrogate(hit.title?.slice(0, 200) ?? ""),
+          snippet: trimTrailingHighSurrogate(hit.snippet?.slice(0, 280) ?? ""),
         }));
       }
       return eligible;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { test } from "node:test";
 import { isPublicAddress, publicHttpsUrl } from "../dist/adapters/public-https.js";
 import { research, researchRequestSchema, ResearchError, routedSearchError } from "../dist/core/research.js";
@@ -194,4 +195,180 @@ test("citation selects multi-line RFC 8949 abstract and long single-line excerpt
 
   assert.equal(longLineResult.status, "completed");
   assert.match(longLineResult.evidence[0].quote, /extensibility without version negotiation/iu);
+});
+
+test("citation stays fast (<500ms) on 512 KiB dense short-line documents", async () => {
+  const cases = [
+    {
+      name: "262k single-token lines",
+      text: "a\n".repeat(262144),
+      focus: "a b",
+    },
+    {
+      name: "260k alternating lines with 26-token focus",
+      text: "a\nb\n".repeat(130000),
+      focus: "a b c d e f g h i j k l m n o p q r s t u v w x y z",
+    },
+  ];
+
+  for (const { name, text, focus } of cases) {
+    let savedDocument = "";
+    const started = performance.now();
+    const result = await research({ urls: ["https://example.org/dense"], focus }, {
+      normalizeUrl,
+      search() { assert.fail("No search should start"); },
+      async read(url) {
+        return { finalUrl: url, mime: "text/plain", title: name, text };
+      },
+      saveSnapshot(_digest, doc) {
+        savedDocument = doc;
+      },
+    }, new AbortController().signal);
+    const elapsedMs = performance.now() - started;
+
+    assert.ok(elapsedMs < 500, `${name} took ${elapsedMs.toFixed(1)} ms (expected < 500 ms)`);
+    assert.equal(result.status, "completed", name);
+    assert.equal(result.evidence.length, 1, name);
+    const [evidence] = result.evidence;
+    assert.ok(evidence.quote.length > 0 && evidence.quote.length <= 850, name);
+    assert.equal(savedDocument.slice(evidence.start, evidence.end), evidence.quote, name);
+  }
+});
+
+test("citation locates targets past 850 chars in >2000-char CJK, punctuation-free, long-tail, and hard-split straddling lines", async () => {
+  const cjkDoc = `${"这是一段用于填充前缀长度的普通中文背景描述文字内容。".repeat(80)}核心结论：这里记录了测试结果。后续补充说明。`;
+  assert.ok(cjkDoc.length > 2000);
+
+  const noPunctDoc = `${"background token ".repeat(125)}critical target extensibility without version negotiation here`;
+  assert.ok(noPunctDoc.length > 2000);
+
+  const longTailDoc = `${"Introductory sentence with generic background text. ".repeat(25)}${"clause padding words without period ".repeat(30)}final extensibility without version negotiation clause`;
+  assert.ok(longTailDoc.length > 2200);
+
+  const cjkStraddle400 = `${"甲".repeat(398)}独特目标词汇${"乙".repeat(1700)}`;
+  assert.ok(cjkStraddle400.length > 2000);
+
+  const cjkStraddle1200 = `${"甲".repeat(1198)}独特目标词汇${"乙".repeat(900)}`;
+  assert.ok(cjkStraddle1200.length > 2000);
+
+  const cases = [
+    {
+      name: "CJK single line without whitespace after full stop",
+      text: cjkDoc,
+      focus: "这里记录了测试结果",
+      expected: "这里记录了测试结果",
+      minStart: 850,
+    },
+    {
+      name: "punctuation-free single line",
+      text: noPunctDoc,
+      focus: "extensibility without version negotiation",
+      expected: "extensibility without version negotiation",
+      minStart: 850,
+    },
+    {
+      name: "long tail clause past last sentence break",
+      text: longTailDoc,
+      focus: "extensibility without version negotiation",
+      expected: "extensibility without version negotiation",
+      minStart: 1300,
+    },
+    {
+      name: "unspaced CJK hard-split straddle at char 400",
+      text: cjkStraddle400,
+      focus: "独特目标词汇",
+      expected: "独特目标词汇",
+      minStart: -1,
+    },
+    {
+      name: "unspaced CJK hard-split straddle at char 1200",
+      text: cjkStraddle1200,
+      focus: "独特目标词汇",
+      expected: "独特目标词汇",
+      minStart: 400,
+    },
+  ];
+
+  for (const { name, text, focus, expected, minStart } of cases) {
+    const result = await research({ urls: ["https://example.org/long-line"], focus }, {
+      normalizeUrl,
+      search() { assert.fail("No search should start"); },
+      async read(url) {
+        return { finalUrl: url, mime: "text/plain", title: name, text };
+      },
+    }, new AbortController().signal);
+
+    assert.equal(result.status, "completed", name);
+    const [evidence] = result.evidence;
+    assert.ok(evidence.start > minStart, `${name}: expected start > ${minStart}, got ${evidence.start}`);
+    assert.ok(evidence.quote.includes(expected), `${name}: quote missed "${expected}"`);
+    assert.equal(text.slice(evidence.start, evidence.end), evidence.quote, name);
+  }
+});
+
+test("citation preserves UTF-16 alignment across Turkish İ expansion and astral surrogate boundaries", async () => {
+  const turkishDoc = `${"alpha ".padEnd(506, "x")}\n${"\u0130".repeat(200)} beta ${"x".repeat(400)}`;
+  const turkishRes = await research({
+    urls: ["https://example.org/turkish"],
+    focus: "alpha beta",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Turkish I", text: turkishDoc };
+    },
+  }, new AbortController().signal);
+  assert.equal(turkishRes.status, "completed");
+  assert.equal(turkishRes.evidence[0].start, 0);
+  assert.ok(turkishRes.evidence[0].quote.includes("alpha"));
+  assert.ok(turkishRes.evidence[0].quote.includes("beta"));
+  assert.equal(turkishDoc.slice(turkishRes.evidence[0].start, turkishRes.evidence[0].end), turkishRes.evidence[0].quote);
+
+  const astralDoc = `a${"😀".repeat(600)}TARGET_ASTRAL${"𠮷".repeat(300)}`;
+  const astralRes = await research({
+    urls: ["https://example.org/astral"],
+    focus: "TARGET_ASTRAL",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: `${"a".repeat(199)}😀`, text: astralDoc };
+    },
+  }, new AbortController().signal);
+  assert.equal(astralRes.status, "completed");
+  assert.ok(astralRes.evidence[0].quote.includes("TARGET_ASTRAL"));
+  assert.equal(astralRes.evidence[0].quote.isWellFormed(), true);
+  assert.equal(astralRes.evidence[0].title.isWellFormed(), true);
+  assert.equal(astralDoc.slice(astralRes.evidence[0].start, astralRes.evidence[0].end), astralRes.evidence[0].quote);
+
+  const edgeSurrogateDoc = `${"a".repeat(849)}😀😀😀`;
+  const edgeRes = await research({
+    urls: ["https://example.org/edge-surrogate"],
+    focus: "nothing",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Edge", text: edgeSurrogateDoc };
+    },
+  }, new AbortController().signal);
+  assert.equal(edgeRes.status, "completed");
+  assert.equal(edgeRes.evidence[0].start, 0);
+  assert.equal(edgeRes.evidence[0].end, 849);
+  assert.equal(edgeRes.evidence[0].quote.length, 849);
+  assert.equal(edgeRes.evidence[0].quote.isWellFormed(), true);
+
+  const loneHighDoc = "\uD800";
+  const loneRes = await research({
+    urls: ["https://example.org/lone-surrogate"],
+    focus: "x",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Lone", text: loneHighDoc };
+    },
+  }, new AbortController().signal);
+  assert.equal(loneRes.status, "failed");
+  assert.equal(loneRes.issues[0].code, "UNUSABLE_BODY");
 });
