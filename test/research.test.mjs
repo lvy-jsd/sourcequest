@@ -372,3 +372,73 @@ test("citation preserves UTF-16 alignment across Turkish İ expansion and astral
   assert.equal(loneRes.status, "failed");
   assert.equal(loneRes.issues[0].code, "UNUSABLE_BODY");
 });
+
+test("citation matches Turkish İ (U+0130) in focus and queries past offset 850", async () => {
+  const istanbulDoc = `${"ordinary background line.\n".repeat(45)}İstanbul target phrase.`;
+  assert.ok(istanbulDoc.indexOf("İstanbul") > 850);
+
+  const focusRes = await research({
+    urls: ["https://example.org/istanbul-focus"],
+    focus: "İstanbul",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Istanbul Focus", text: istanbulDoc };
+    },
+  }, new AbortController().signal);
+  assert.equal(focusRes.status, "completed");
+  assert.ok(focusRes.evidence[0].start >= 850);
+  assert.ok(focusRes.evidence[0].quote.includes("İstanbul"));
+  assert.equal(istanbulDoc.slice(focusRes.evidence[0].start, focusRes.evidence[0].end), focusRes.evidence[0].quote);
+
+  const queryRes = await research({
+    queries: ["İstanbul"],
+  }, {
+    normalizeUrl,
+    async search() {
+      return [{ url: "https://example.org/istanbul-query", title: "Istanbul Query" }];
+    },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Istanbul Query", text: istanbulDoc };
+    },
+  }, new AbortController().signal);
+  assert.equal(queryRes.status, "completed");
+  assert.ok(queryRes.evidence[0].start >= 850);
+  assert.ok(queryRes.evidence[0].quote.includes("İstanbul"));
+  assert.equal(istanbulDoc.slice(queryRes.evidence[0].start, queryRes.evidence[0].end), queryRes.evidence[0].quote);
+
+  const singleCharDoc = `${"x ".repeat(600)}İ Ankara`;
+  assert.ok(singleCharDoc.indexOf("İ Ankara") > 850);
+  const singleCharRes = await research({
+    urls: ["https://example.org/istanbul-char"],
+    focus: "İ",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Single Turkish I", text: singleCharDoc };
+    },
+  }, new AbortController().signal);
+  assert.equal(singleCharRes.status, "completed");
+  assert.ok(singleCharRes.evidence[0].start > 0);
+  assert.ok(singleCharRes.evidence[0].end > 850);
+  assert.ok(singleCharRes.evidence[0].quote.includes("İ Ankara"));
+  assert.equal(singleCharDoc.slice(singleCharRes.evidence[0].start, singleCharRes.evidence[0].end), singleCharRes.evidence[0].quote);
+
+  const mixedDoc = `${"ordinary background line.\n".repeat(45)}İstanbul Türkiye target.`;
+  const mixedRes = await research({
+    urls: ["https://example.org/istanbul-mixed"],
+    focus: "İstanbul Türkiye",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Mixed Turkish I", text: mixedDoc };
+    },
+  }, new AbortController().signal);
+  assert.equal(mixedRes.status, "completed");
+  assert.ok(mixedRes.evidence[0].start >= 850);
+  assert.ok(mixedRes.evidence[0].quote.includes("İstanbul Türkiye"));
+  assert.equal(mixedDoc.slice(mixedRes.evidence[0].start, mixedRes.evidence[0].end), mixedRes.evidence[0].quote);
+});

@@ -102,7 +102,8 @@ const evidenceSchema = z.strictObject({
 const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
 function segmentWords(text: string): string[] {
-  return [...wordSegmenter.segment(text.toLowerCase())]
+  const normalized = (text.includes("\u0130") ? text.replace(/\u0130/gu, "i") : text).toLowerCase();
+  return [...wordSegmenter.segment(normalized)]
     .filter((piece) => piece.isWordLike)
     .map((piece) => piece.segment);
 }
