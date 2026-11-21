@@ -26,19 +26,29 @@ export class DshLlmError extends Error {
   }
 }
 
-function tryParseJson<T>(text: string): T | undefined {
-  const trimmed = text.trim();
-  const clean = trimmed.startsWith("```")
-    ? trimmed.replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "").trim()
-    : trimmed;
-  const start = clean.indexOf("{");
-  const end = clean.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) return undefined;
-  try {
-    return JSON.parse(clean.slice(start, end + 1)) as T;
-  } catch {
-    return undefined;
+export function parseStructuredJson<T>(text: string): T | undefined {
+  // Strip reasoning blocks emitted by DeepSeek / local reasoning models before JSON extraction.
+  const withoutThink = text
+    .replace(/<think>[\s\S]*?<\/think>/giu, "")
+    .replace(/<think>[\s\S]*$/giu, "")
+    .trim();
+  const candidateSource = withoutThink || text.trim();
+  const fenceMatches = [...candidateSource.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/giu)];
+  const candidates = fenceMatches.length > 0
+    ? [...fenceMatches.map((m) => m[1].trim()), candidateSource]
+    : [candidateSource];
+
+  for (const rawCandidate of candidates) {
+    const start = rawCandidate.indexOf("{");
+    const end = rawCandidate.lastIndexOf("}");
+    if (start === -1 || end === -1 || end < start) continue;
+    try {
+      return JSON.parse(rawCandidate.slice(start, end + 1)) as T;
+    } catch {
+      // Try next candidate block.
+    }
   }
+  return undefined;
 }
 
 function mapFailureCode(rawCode: string | undefined): DshLlmError["code"] {
@@ -66,7 +76,7 @@ export class DshLlmAdapter implements LlmPort {
       const out = await this.options.directCall({ ...req, userPrompt: boundedPrompt }, ctx);
       return {
         ...out,
-        parsed: (out.parsed as T | undefined) ?? tryParseJson<T>(out.text),
+        parsed: (out.parsed as T | undefined) ?? parseStructuredJson<T>(out.text),
         durationMs: Math.max(0, Date.now() - startMs),
       };
     }
@@ -126,7 +136,7 @@ export class DshLlmAdapter implements LlmPort {
 
     return {
       text,
-      parsed: tryParseJson<T>(text),
+      parsed: parseStructuredJson<T>(text),
       resolvedModel: prepared.config.model,
       provider: prepared.config.provider,
       inputTokens,

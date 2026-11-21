@@ -4,7 +4,7 @@
 
 根据任务自动选择搜索源、模型和读取工具，围绕证据缺口开展有预算的研究，交付能够回到原文的答案与研究记录。首发优先提供 DSH 原生体验，之后扩展 MCP、CLI 和其他客户端。
 
-> **项目状态：v0.1 研究闭环与 G7 扩展架构已落地（离线/契约/E2E 全绿，外部凭据及可选运行时按真实环境标记待测）。** 在 DSH 0.2.2-rc.5 已支持 `net_research`（含 `goal`/`strategy` 有预算子问题循环与兼容预览模式）、`net_job`（含 `list`/`status`/`results`/`cancel`/`resume`/`evidence`）、`sourcequest_doctor` 以及按需扩展工具 `web_extract`、`web_map`、`web_crawl`、`feed_fetch`。
+> **项目状态：v0.1 研究闭环与 G7 十类前沿资源引擎已落地（离线/契约/E2E 全绿，外部凭据及可选运行时按真实环境标记待测）。** 在 DSH 0.2.2-rc.5 已支持 `net_research`（含 `goal`/`strategy` 有预算子问题循环与兼容预览模式）、`net_job`（含 `list`/`status`/`results`/`cancel`/`resume`/`evidence`）、`sourcequest_doctor`、`web_extract` / `web_map` / `web_crawl` / `feed_fetch`，以及覆盖网页、小说、视频、软件归档、音乐、漫画、图集、论文数据集、直播与播客的 `resource_acquire`。
 
 ## 试用首条研究链路
 

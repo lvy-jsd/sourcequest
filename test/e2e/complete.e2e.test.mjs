@@ -34,7 +34,7 @@ test("E2E: full plugin mount registers all v0.1 + G7 tools, executes doctor/rese
       await plugin.await();
 
       const schemas = ctx.tools.schemas(scopeKey).map((s) => s.name);
-      for (const expected of ["sourcequest_status", "net_research", "net_job", "sourcequest_doctor", "web_extract", "web_map", "web_crawl", "feed_fetch"]) {
+      for (const expected of ["sourcequest_status", "net_research", "net_job", "sourcequest_doctor", "web_extract", "web_map", "web_crawl", "feed_fetch", "resource_acquire"]) {
         assert.equal(schemas.includes(expected), true, `Missing registered tool: ${expected}`);
       }
 

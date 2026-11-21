@@ -11,6 +11,23 @@ import type {
   PortCallContext,
 } from "../ports/index.js";
 
+export {
+  extractFrontierWebContent,
+  probeNovelRules,
+  crawlNovelChapters,
+  parseSubtitlesWithAnchors,
+  parseHlsPlaylist,
+  inspectAndExtractVod,
+  detectMissingVolumes,
+  verifyAndFetchArchive,
+  parseLrcLyrics,
+  matchAndVerifyMusicPlaylist,
+  inspectAndVerifyGallery,
+  parseAcademicPaperText,
+  analyzeLiveHlsWindow,
+  parsePodcastFeedXml,
+} from "./frontier-resources.js";
+
 export const BROWSER_COMPARISON_MATRIX = [
   {
     id: "playwright",

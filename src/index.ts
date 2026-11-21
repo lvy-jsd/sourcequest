@@ -15,7 +15,16 @@ import { fullResearchRequestSchema } from "./core/contracts.js";
 import { runBoundedResearchLoop } from "./core/research-loop.js";
 import { SourceQuestRpcService } from "./adapters/dsh-rpc.js";
 import { runDoctor } from "./adapters/dsh-doctor.js";
-import { Crawl4AiExecutor, DocumentParserExecutor } from "./executors/index.js";
+import {
+  Crawl4AiExecutor,
+  DocumentParserExecutor,
+  extractFrontierWebContent,
+  crawlNovelChapters,
+  inspectAndExtractVod,
+  verifyAndFetchArchive,
+  parseAcademicPaperText,
+  parsePodcastFeedXml,
+} from "./executors/index.js";
 import { createChineseFeedConnector } from "./connectors/index.js";
 import type { SearchPort } from "./ports/index.js";
 import { defineTool, type ToolRunContext } from "@deepseek-ai/dsh-tools";
@@ -29,7 +38,7 @@ export { buildResearchPlan } from "./core/planner.js";
 export { CorpusIndex } from "./core/corpus-retrieval.js";
 export { runBoundedResearchLoop, verifyWithCounterEvidence, generateDeepRecoveryReport } from "./core/research-loop.js";
 export { migrateTaskRecord, fullResearchRequestSchema } from "./core/contracts.js";
-export { DshLlmAdapter, DshLlmError } from "./adapters/dsh-llm.js";
+export { DshLlmAdapter, DshLlmError, parseStructuredJson } from "./adapters/dsh-llm.js";
 export { ExplicitDshWebBridge } from "./adapters/dsh-web.js";
 export { SourceQuestRpcService } from "./adapters/dsh-rpc.js";
 export { runDoctor, exportTaskEvidence, deleteSessionEvidence } from "./adapters/dsh-doctor.js";
@@ -49,6 +58,20 @@ export {
   ResumableBatchQueueExecutor,
   planAcademicDatasetExecution,
   BROWSER_COMPARISON_MATRIX,
+  extractFrontierWebContent,
+  probeNovelRules,
+  crawlNovelChapters,
+  parseSubtitlesWithAnchors,
+  parseHlsPlaylist,
+  inspectAndExtractVod,
+  detectMissingVolumes,
+  verifyAndFetchArchive,
+  parseLrcLyrics,
+  matchAndVerifyMusicPlaylist,
+  inspectAndVerifyGallery,
+  parseAcademicPaperText,
+  analyzeLiveHlsWindow,
+  parsePodcastFeedXml,
 } from "./executors/index.js";
 
 export const name = "sourcequest";
@@ -579,7 +602,49 @@ function optionalG7Tools() {
     },
   });
 
-  return [webExtract, webMap, webCrawl, feedFetch];
+  const resourceAcquire = defineTool({
+    name: "resource_acquire",
+    description: "Acquire and verify specialized public HTTPS resources across web, novel, vod, software_archive, music, comic, gallery, paper_dataset, livestream, and podcast pipelines.",
+    parameters: {
+      kind: {
+        type: "string",
+        enum: ["web", "novel", "vod", "software_archive", "music", "comic", "gallery", "paper_dataset", "livestream", "podcast"],
+        required: true,
+      },
+      url: { type: "string", required: true },
+      maxItems: { type: "integer" },
+    },
+    output: { schema: { type: "json" }, render: (_a, v) => [{ type: "text", text: JSON.stringify(v) }] },
+    async execute({ kind, url, maxItems = 10 }, { signal }) {
+      const safe = publicHttpsUrl(url).href;
+      switch (kind) {
+        case "web": {
+          const page = await readPublicHttps(safe, signal);
+          return toJsonResult(extractFrontierWebContent(page.text, page.finalUrl));
+        }
+        case "novel": {
+          const page = await readPublicHttps(safe, signal);
+          return toJsonResult(await crawlNovelChapters({ tocHtml: page.text, tocUrl: page.finalUrl, maxChapters: maxItems, signal }));
+        }
+        case "vod":
+          return toJsonResult(await inspectAndExtractVod({ url: safe, useExternalYtDlp: true, signal }));
+        case "software_archive":
+          return toJsonResult(await verifyAndFetchArchive({ url: safe, signal }));
+        case "paper_dataset": {
+          const page = await readPublicHttps(safe, signal);
+          return toJsonResult(await parseAcademicPaperText({ rawTextOrPages: page.text, signal }));
+        }
+        case "podcast": {
+          const page = await readPublicHttps(safe, signal);
+          return toJsonResult({ episodes: parsePodcastFeedXml(page.text).slice(0, maxItems) });
+        }
+        default:
+          return toJsonResult({ kind, url: safe, status: "manifest_required", message: `Supply structured manifest/items via SourceQuest executors for ${kind}.` });
+      }
+    },
+  });
+
+  return [webExtract, webMap, webCrawl, feedFetch, resourceAcquire];
 }
 
 export function apply(ctx: Context): void {
