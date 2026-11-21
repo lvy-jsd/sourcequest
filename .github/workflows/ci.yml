@@ -20,4 +20,5 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run benchmark --silent
+      - run: npm run benchmark:public --silent
       - run: npm pack --dry-run

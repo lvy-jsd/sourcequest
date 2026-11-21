@@ -6,15 +6,14 @@ SQ-010–012 的第一批真实来源题集用固定 URL 测正文获取、引�
 
 ```sh
 npm ci
-npm run build
-node benchmark/public-evaluation.mjs
-node --test benchmark/public-evaluation.test.mjs
+npm test
+npm run benchmark:public --silent
 ```
 
 默认使用合成短文本，适合反复核查判分。显式在线模式逐题读取公开 URL，每题一次逻辑读取，沿用探原的出站策略、单步超时和正文限制。该模式不调用搜索 API 或模型，不需要账号或凭据。
 
 ```sh
-node benchmark/public-evaluation.mjs --live
+npm run benchmark:public:live --silent
 node benchmark/public-evaluation.mjs --live --only json-public-encoding
 ```
 
@@ -38,3 +37,5 @@ JSON 由标准输出生成，退出码 0 表示所选题全通过，1 表示有�
 ## 首次在线结果
 
 2026-11-20 使用 Node.js v24.13.0，在开发环境中执行六次逻辑读取。六题均成功读取预期页面且引文可定位，五题引文覆盖参考要点。CBOR 题的规范化快照包含所需信息，引文却没有完整覆盖参考要点，作为选段质量的已知问题保留。[CBOR 规范](https://www.rfc-editor.org/rfc/rfc8949.html#abstract)
+
+后续已在 `citation()` 引入跨行滑窗、IDF 与邻接二元词组打分，并在离线多行回归测试中验证 CBOR 摘要选段覆盖；`--live` 在线复跑尚待在有公网核验条件的环境中执行。

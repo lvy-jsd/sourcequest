@@ -16,8 +16,10 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "benchmark": "npm run build --silent && node benchmark/research-baseline.mjs"
+    "test": "npm run build && node --test test/*.test.mjs benchmark/*.test.mjs",
+    "benchmark": "npm run build --silent && node benchmark/research-baseline.mjs",
+    "benchmark:public": "npm run build --silent && node benchmark/public-evaluation.mjs",
+    "benchmark:public:live": "npm run build --silent && node benchmark/public-evaluation.mjs --live"
   },
   "dsh": {
     "bundle": {

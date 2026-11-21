@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { isPublicAddress, publicHttpsUrl } from "../dist/adapters/public-https.js";
-import { research } from "../dist/core/research.js";
+import { research, researchRequestSchema, ResearchError, routedSearchError } from "../dist/core/research.js";
 
 const normalizeUrl = (url) => publicHttpsUrl(url).href;
 
@@ -88,4 +88,110 @@ test("retains the inline citation when the snapshot cannot be committed", async 
   assert.equal(result.evidence[0].snapshotSaved, false);
   assert.equal(result.issues[0].code, "STORAGE_FAILED");
   assert.equal(JSON.stringify(result).includes("filesystem details"), false);
+});
+
+test("forwards search source and allowFallback without mutating legacy request shapes", async () => {
+  const legacy = researchRequestSchema.parse({ queries: ["fixture"] });
+  assert.deepEqual(legacy, { queries: ["fixture"], urls: [], focus: "" });
+  assert.equal("source" in legacy, false);
+  assert.equal("allowFallback" in legacy, false);
+
+  const seenCalls = [];
+  const port = {
+    normalizeUrl,
+    async search(query, maxResults, _signal, options) {
+      seenCalls.push({ query, maxResults, options, argCount: arguments.length });
+      return [];
+    },
+    read() { assert.fail("No read should start"); },
+  };
+
+  await research({ queries: ["legacy"] }, port, new AbortController().signal);
+  await research({ queries: ["pinned"], source: "github", allowFallback: false }, port, new AbortController().signal);
+
+  assert.deepEqual(seenCalls, [
+    { query: "legacy", maxResults: 3, options: undefined, argCount: 3 },
+    { query: "pinned", maxResults: 3, options: { source: "github", allowFallback: false }, argCount: 4 },
+  ]);
+
+  const invalid = await research({ queries: ["q"], source: "unknown" }, port, new AbortController().signal);
+  assert.equal(invalid.status, "failed");
+  assert.equal(invalid.issues[0].code, "INVALID_REQUEST");
+});
+
+test("routedSearchError classifies zero-hit attempts without misreporting primary failures as empty", () => {
+  assert.equal(routedSearchError([]), undefined);
+  assert.equal(routedSearchError([{ source: "host", status: "empty", dispatched: true }]), undefined);
+  assert.equal(routedSearchError([
+    { source: "host", status: "empty", dispatched: true },
+    { source: "github", status: "rate_limited", dispatched: true },
+  ]), undefined);
+
+  const primaryAuthFallbackEmpty = routedSearchError([
+    { source: "host", status: "auth_required", dispatched: true },
+    { source: "github", status: "empty", dispatched: true },
+  ]);
+  assert.ok(primaryAuthFallbackEmpty instanceof ResearchError);
+  assert.equal(primaryAuthFallbackEmpty.code, "AUTH_REQUIRED");
+
+  assert.equal(routedSearchError([
+    { source: "host", status: "auth_required", dispatched: true },
+    { source: "github", status: "cooldown", dispatched: false, retryAfterMs: 1000 },
+  ])?.code, "RATE_LIMITED");
+  assert.equal(routedSearchError([
+    { source: "host", status: "unavailable", dispatched: false },
+    { source: "github", status: "timeout", dispatched: true },
+  ])?.code, "TIMEOUT");
+  assert.equal(routedSearchError([
+    { source: "host", status: "unavailable", dispatched: false },
+    { source: "github", status: "failed", dispatched: true },
+  ])?.code, "SEARCH_FAILED");
+});
+
+test("citation selects multi-line RFC 8949 abstract and long single-line excerpts", async () => {
+  const preamble = Array.from({ length: 45 }, (_, i) => `Section ${i}: data format notes and generic encoding details.`).join("\n");
+  const rfc8949Abstract = [
+    "Abstract",
+    "The Concise Binary Object Representation (CBOR) is a data format whose design",
+    "goals include the",
+    "possibility of extremely small code size, fairly small message size, and",
+    "extensibility without the",
+    "need for version negotiation. These design goals make it different from earlier",
+    "binary",
+    "serializations such as ASN.1 and MessagePack.",
+  ].join("\n");
+  const document = `${preamble}\n${rfc8949Abstract}`;
+
+  const result = await research({
+    urls: ["https://www.rfc-editor.org/rfc/rfc8949.html#abstract"],
+    focus: "representation data format design goals small code size extensibility without need version negotiation",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/html", title: "RFC 8949", text: document };
+    },
+  }, new AbortController().signal);
+
+  assert.equal(result.status, "completed");
+  assert.match(
+    result.evidence[0].quote.replace(/\s+/gu, " "),
+    /(?:extensibility|extension) without (?:the need for )?version negotiation/iu,
+  );
+  assert.equal(document.slice(result.evidence[0].start, result.evidence[0].end), result.evidence[0].quote);
+
+  const singleLine = `${"Introductory sentence with generic background text. ".repeat(25)}Critical target: extensibility without version negotiation is required.`;
+  const longLineResult = await research({
+    urls: ["https://example.org/spec"],
+    focus: "extensibility without version negotiation",
+  }, {
+    normalizeUrl,
+    search() { assert.fail("No search should start"); },
+    async read(url) {
+      return { finalUrl: url, mime: "text/plain", title: "Spec", text: singleLine };
+    },
+  }, new AbortController().signal);
+
+  assert.equal(longLineResult.status, "completed");
+  assert.match(longLineResult.evidence[0].quote, /extensibility without version negotiation/iu);
 });

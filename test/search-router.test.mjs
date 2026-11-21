@@ -174,3 +174,59 @@ test("caller cancellation propagates immediately and does not trigger fallback",
   await assert.rejects(router.search("DSH", 1, controller.signal), (error) => error === reason);
   assert.deepEqual(calls, []);
 });
+
+test("attemptTimeoutMs validates bounds and supports fast overrides", async () => {
+  for (const attemptTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => new SearchRouter([], { attemptTimeoutMs }), RangeError);
+  }
+  const calls = [];
+  const router = new SearchRouter([
+    {
+      id: "host",
+      search() {
+        return new Promise(() => {});
+      },
+    },
+    success("github", calls),
+  ], { attemptTimeoutMs: 30 });
+
+  const result = await router.search("DSH", 1, signal());
+  assert.deepEqual(result, {
+    hits: [hit("github")],
+    attempts: [
+      { source: "host", status: "timeout", dispatched: true },
+      { source: "github", status: "ok", dispatched: true },
+    ],
+  });
+});
+
+test("auto routing records unavailable when no providers are configured and preserves auth_required", async () => {
+  const emptyRouter = new SearchRouter([]);
+  assert.deepEqual(await emptyRouter.search("weather in Perth", 1, signal()), {
+    hits: [],
+    attempts: [{ source: "host", status: "unavailable", dispatched: false }],
+  });
+  assert.deepEqual(await emptyRouter.search("GitHub repository", 1, signal(), { allowFallback: false }), {
+    hits: [],
+    attempts: [{ source: "github", status: "unavailable", dispatched: false }],
+  });
+
+  const calls = [];
+  const authFallbackRouter = new SearchRouter([
+    {
+      id: "host",
+      async search() {
+        throw new SearchProviderError("auth_required", "secret credential message");
+      },
+    },
+    success("github", calls),
+  ]);
+  const result = await authFallbackRouter.search("DSH", 1, signal());
+  assert.deepEqual(result, {
+    hits: [hit("github")],
+    attempts: [
+      { source: "host", status: "auth_required", dispatched: true },
+      { source: "github", status: "ok", dispatched: true },
+    ],
+  });
+});

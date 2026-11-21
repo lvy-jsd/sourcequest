@@ -1,6 +1,6 @@
 # 项目目标与施工交接
 
-更新于 2026-11-20（Australia/Perth）。
+更新于 2026-11-21（Australia/Perth）。
 
 **目标**是把探原做成独立开源的 DSH 原生网络研究与资源获取插件。用户在现有会话发起任务，探原自动选择来源、模型与执行器，交付能定位到原文的证据，以及能取消和恢复的后台任务。关键事实正确性、原文支撑率、任务完成度、恢复结果、延迟与成本通过同题评测衡量。后续 MCP 和 CLI 复用同一核心。
 
@@ -10,16 +10,17 @@
 |---|---|---|
 | 施工计划 v1.3 | 已记录 | [46 项施工任务](IMPLEMENTATION_PLAN.md)列出依赖与验收条件。 |
 | SQ-001 · DSH SDK | 首期验收通过 | 已核对 DSH 0.2.2-rc.5 / Cordis 4.1.0 的发行类型，使用锁定包编译并实测工具接口。持久化、认证与模型按各自里程碑验证。[勘验记录](COMPATIBILITY.md) |
-| SQ-002 · 数据契约 | 首批已实现 | 已增加版本化的任务状态、预算和错误校验及状态转换测试，覆盖终态保护、过时代际/版本拒绝和续跑。首条研究链路已实现轻量入参和引文类型。已接入规范化快照。路由协议、原始响应和迁移仍待实现。[任务和证据契约](CONTRACTS.md) |
+| SQ-002 · 数据契约 | 首批已实现 | 已增加版本化的任务状态、预算和错误校验及状态转换测试，覆盖终态保护、过时代际/版本拒绝和续跑。首条研究链路已实现轻量入参、可选 `source` / `allowFallback` 与引文类型。已接入规范化快照。路由协议、原始响应和迁移仍待实现。[任务和证据契约](CONTRACTS.md) |
 | SQ-003 · 最小 Bundle | 已验收 | TypeScript、依赖锁文件与 CI 配置已提交。隔离 Web profile 安装后经真实 DSH 执行诊断，移除重启后工具消失；自动化测试另覆盖作用域及 fiber 释放。[复现步骤](COMPATIBILITY.md#隔离-profile-验收) |
-| SQ-030 / SQ-032 / SQ-050 · 首条研究链路 | 隔离预览通过 | `net_research` 通过宿主 Web Seam 搜索，显式 URL 优先读取。隔离 profile 用合成搜索与公开 HTTPS 实测部分成功、抓取和引文。已支持有界后台任务。完整路由和正式工具协议尚待实现。[复现](COMPATIBILITY.md#研究链路烟测) |
+| SQ-030 / SQ-032 / SQ-050 · 首条研究链路 | 隔离预览通过 | `net_research` 已通过生命周期级 `SearchRouter` 路由搜索，显式 URL 优先读取。隔离 profile 用合成搜索与公开 HTTPS 实测部分成功、抓取和引文。已支持有界后台任务。完整端口协议与正式工具协议尚待实现。[复现](COMPATIBILITY.md#研究链路烟测) |
+| SQ-031 / SQ-034 / SQ-035 · 多源搜索路由与公开适配器 | 主链路已接入（离线单元与契约验证通过） | 已合并 `sq-search-router`、`sq-search-providers` 与 `sq-search-eval`，将 `host` / `github` / `crossref` 路由器接入 `net_research` 与 `net_job resume` 生命周期（含 `AsyncLocalStorage` 隔离 `llmProvider`、`source` / `allowFallback` 参数、`WebError` 脱敏映射及 `routedSearchError` 分类），并升级 `citation()` 跨行 IDF/滑窗选段以修复 CBOR 多行摘要漏选。当前以模拟/离线单测与契约测试通过（`npm run check`、`npm test`）；实网匿名 GitHub/Crossref 限流行为与隔离 DSH profile 回归待实测；`LlmPort`（SQ-033）、`CapabilityRegistry`、分层路由、响应缓存、同源族去重与读主机退避仍待补全。[公开垂直搜索源](SEARCH_PROVIDERS.md) |
 | SQ-022 / SQ-024 · 快照与分页读取 | 隔离预览通过 | `net_research` 在会话下写入有配额的 SQLite 快照，`net_job evidence` 按会话读取并校验 SHA-256。隔离重启和会话边界测试通过；回收、原始响应与二进制 Artifact 待补。[复现](COMPATIBILITY.md#快照重启验收) |
 | SQ-020 / SQ-021 · 后台研究 | 隔离预览通过 | 宿主 jobs 与 storageDomain 已接通，提交有幂等键，同会话可查状态、取结果、取消；重启时标记未完成任务，支持在原会话手动续跑。隔离 profile 用两个真实 Agent 实例验证执行与归属，未发起模型请求。[复现](COMPATIBILITY.md#后台任务验收) |
 | SQ-023 · 逻辑步骤账本 | 隔离预览通过 | 搜索和读取先落盘预约，完成后写入结果；续跑重放已结算结果并保留未结算预约的额度。实测强制终止后恢复，在剩余额度内补齐网页读取。金额、模型 token、父子任务与实际下游调用用量待实现。[复现](COMPATIBILITY.md#中断与续跑验收) |
-| SQ-010–012 · 研究基线 | 离线首批通过 | 十个合成案例接入 CI，报告保留逐题状态、请求数、锚点和失败断言。真实源与留出题待补。[评测说明](ACCEPTANCE.md#首条研究链路离线基线) |
+| SQ-010–012 · 研究基线 | 离线与公开基线已接入 CI（在线复跑待执行） | 十个合成研究案例（`npm run benchmark --silent`）与六个公开一手来源固定 URL 离线评测（`npm run benchmark:public --silent`）均已接入 CI 并通过；`citation()` 选段修复已通过离线多行 CBOR 回归测试，`npm run benchmark:public:live --silent` 实网复跑与 50 题开发/留出集待补。[评测说明](ACCEPTANCE.md#首条研究链路离线基线) · [公开来源评测](EVALUATION.md) |
 | 后续执行器 | 已完成设计 | [资源执行器](RESOURCE_EXECUTORS.md)覆盖十类资源和三种任务类型。各适配器按实际验证结果进入支持清单。 |
 
-**下一步接手 SQ-031 / SQ-034。** 先接两个可单独识别的搜索源，在当前离线基线上验证路由、限流退避和故障转移，再扩展真实题与留出题。后台逻辑账本后续再扩展到真实成本与模型用量。
+**下一步接手 M2：`SQ-033`（`LlmPort`）与 G4 有预算研究闭环（`SQ-040–044`）。** 先补齐 `src/ports/*` 完整端口契约（`LlmPort`、`ReadPort`、`CapabilityRegistry`）与路由/缓存/退避策略，再实现子问题拆解、检索读取、缺口检查、有限补查与带引文结果综合，并完成隔离 DSH 0.2.2-rc.5 回归与 `--live` 复测。
 
 ## GitHub 同步约定
 

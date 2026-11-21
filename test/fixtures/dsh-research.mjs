@@ -28,7 +28,7 @@ export async function apply(ctx) {
       type: "tool-call",
       id: "sourcequest-research-smoke",
       name: "net_research",
-      arguments: JSON.stringify({ queries: ["failing query", "example"], focus: "Example Domain" }),
+      arguments: JSON.stringify({ queries: ["failing query", "example"], focus: "Example Domain", source: "host" }),
     }],
   });
   const [entry] = results;

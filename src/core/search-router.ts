@@ -16,7 +16,11 @@ export type SearchOptions = {
   allowFallback?: boolean;
 };
 
-type ProviderErrorCode = "unavailable" | "rate_limited" | "timeout" | "failed";
+export type ProviderErrorCode = "unavailable" | "auth_required" | "rate_limited" | "timeout" | "failed";
+
+export type SearchRouterOptions = {
+  attemptTimeoutMs?: number;
+};
 
 export type SearchAttempt = {
   source: SearchSourceId;
@@ -39,7 +43,7 @@ export class SearchProviderError extends Error {
 }
 
 const sourceIds: readonly SearchSourceId[] = ["host", "github", "crossref"];
-const attemptTimeoutMs = 1_800;
+const defaultAttemptTimeoutMs = 1_800;
 const defaultCooldownMs = 30_000;
 
 function preferredSource(query: string): SearchSourceId {
@@ -73,7 +77,7 @@ function cappedHits(hits: readonly SearchHit[], maxResults: number): SearchHit[]
 }
 
 async function invokeProvider(
-  provider: SearchProvider, query: string, maxResults: number, caller: AbortSignal,
+  provider: SearchProvider, query: string, maxResults: number, caller: AbortSignal, attemptTimeoutMs: number,
 ): Promise<readonly SearchHit[]> {
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(new SearchProviderError("timeout")), attemptTimeoutMs);
@@ -106,8 +110,14 @@ function retryDelay(hint: number | undefined): number {
 export class SearchRouter {
   private readonly providers = new Map<SearchSourceId, SearchProvider>();
   private readonly cooldownUntil = new Map<SearchSourceId, number>();
+  private readonly attemptTimeoutMs: number;
 
-  constructor(providers: readonly SearchProvider[]) {
+  constructor(providers: readonly SearchProvider[], options: SearchRouterOptions = {}) {
+    const timeout = options.attemptTimeoutMs ?? defaultAttemptTimeoutMs;
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+      throw new RangeError("Invalid attempt timeout.");
+    }
+    this.attemptTimeoutMs = timeout;
     for (const provider of providers) {
       if (this.providers.has(provider.id)) throw new Error(`Duplicate search source: ${provider.id}`);
       this.providers.set(provider.id, provider);
@@ -135,7 +145,7 @@ export class SearchRouter {
       this.cooldownUntil.delete(source);
 
       try {
-        const response = await invokeProvider(provider, query, maxResults, signal);
+        const response = await invokeProvider(provider, query, maxResults, signal, this.attemptTimeoutMs);
         const hits = cappedHits(response, maxResults);
         attempts.push({ source, status: hits.length ? "ok" : "empty", dispatched: true });
         if (hits.length) return { hits, attempts };
@@ -160,7 +170,10 @@ export class SearchRouter {
     const topicSource = preferredSource(query);
     const configured = [...new Set([topicSource, ...sourceIds])].filter((id) => this.providers.has(id));
     const fallback = options.allowFallback ?? (source === "auto");
-    if (source === "auto") return fallback ? configured : configured.slice(0, 1);
+    if (source === "auto") {
+      if (!configured.length) return [topicSource];
+      return fallback ? configured : configured.slice(0, 1);
+    }
     return fallback ? [source, ...configured.filter((id) => id !== source)] : [source];
   }
 }
