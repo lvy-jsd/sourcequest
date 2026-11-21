@@ -19,7 +19,7 @@
 | SQ-010–012 / SQ-060–063 · 评测与 B1–B22 验收（G6） | 离线基线与 52+2 自动化测试通过 | `npm test`（52/52，含 `acceptance-b1-b22.test.mjs` 与 `g2-g7-complete.test.mjs`）、`npm run test:e2e`（2/2）、10 题离线基线、6 题公开源离线基线与 50 题分层评测（开发 30/30、留出 20/20，10 题未支持能力如实计入分母且标为 `unsupported`）全部通过；真实在线评测（需外部搜索凭据/预算）按规范不自动触发。 |
 | SQ-070–079 · G7 专题连接器与十类前沿资源引擎 | 已融合内核与 61 项单测通过；外部运行时/凭据项标记受阻/待实测 | 已实现 `CorpusIndex`（BM25+混合重排对比）、`generateDeepRecoveryReport`、`arXiv`/`OpenAlex`/`cn-feeds` 连接器、`Crawl4AiExecutor`、`DocumentParserExecutor`、`BrowserExecutor`、`ResumableBatchQueueExecutor`，以及融合十类前沿资源能力的 [frontier-resources.ts](../src/executors/frontier-resources.ts)（Trafilatura/Defuddle 网页 Markdown 与 JSON-LD 提取、`lncrawl`/Legado 连载规则探测与断章校验、HLS `.m3u8` + WebVTT/SRT 字幕锚定 + `yt-dlp` 探测、HTTP Range 断点续传与多卷校验、ISRC + LRC 歌词对齐、图集/漫画原图与缩略图分层及 `ComicInfo.xml`、学术论文公式与跨页表格、`Streamlink` 直播滑窗空窗标注、Podcast RSS 2.0 解析）和 `<think>` 兼容 JSON 解析（`parseStructuredJson`），暴露统一入口 `resource_acquire`。需外部账号凭据或未装本地二进制的执行器（`x-search`、Telegram/Discord/Feishu/Notion、Streamlink/gallery-dl/Docling/OCR 实机二进制）已按 `AGENTS.md` 如实标记为受阻/未实测。 |
 
-**当前状态**：G3–G7 核心架构、DSH 原生适配、G7 连接器/执行器与 52 项单测 + 2 项 E2E + 50 题分层评测全部通过；仅剩需个人外部账号凭据或重型本地二进制的第三方在线验收留待目标运行环境按需补充（见 [ACCEPTANCE.md](ACCEPTANCE.md)）。下一步如推进跨端可接手 G8（MCP/CLI）。
+**当前状态**：G3–G7 核心架构、DSH 原生适配、G7 十类前沿资源引擎与 61 项单测 + 2 项 E2E + 50 题分层评测全部通过，并已完成 DSH `0.2.2-rc.5` Web profile 实装打包验证（真实 Cordis 环境已确认挂载 `sourcequest_status`、`sourcequest_doctor`、`net_research`、`net_job`、`web_extract`、`web_map`、`web_crawl`、`feed_fetch`、`resource_acquire` 共 9 个工具；实机已验证 `pdftotext`、`tesseract`、`ffmpeg` 二进制探测、公开 HTTPS 全文抓取、SQLite SHA-256 快照与真实 Crossref/GitHub 查询）；需外部账号凭据或未装二进制（`yt-dlp`、`gallery-dl`、`aria2c`、第三方 IM/社交凭据、浏览器 UI 点击）按真实环境留待按需补充（见 [ACCEPTANCE.md](ACCEPTANCE.md)）。下一步如推进跨端可接手 G8（MCP/CLI）。
 
 ## GitHub 同步约定
 
